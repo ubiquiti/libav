@@ -778,6 +778,8 @@ out:
 #define VD AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_DECODING_PARAM
 static const AVOption h264_options[] = {
     { "enable_er", "Enable error resilience on damaged frames (unsafe)", OFFSET(enable_er), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, VD },
+    { "is_avc", "Set to 1 if the bits stream is AVCC, set to 0 if the bits stream is annex B", OFFSET(is_avc), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, VD },
+    { "nal_length_size", "The size of the bits stream NALU delimiter. Ignored when is_avc is 0", OFFSET(nal_length_size), AV_OPT_TYPE_INT, { .i64 = 4 }, 0, 4, VD },
     { NULL },
 };
 
