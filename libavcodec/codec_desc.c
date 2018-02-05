@@ -20,9 +20,9 @@
 
 #include "libavutil/common.h"
 #include "libavutil/internal.h"
+
 #include "avcodec.h"
 #include "profiles.h"
-#include "version.h"
 
 static const AVCodecDescriptor codec_descriptors[] = {
     /* video codecs */
@@ -41,15 +41,6 @@ static const AVCodecDescriptor codec_descriptors[] = {
         .props     = AV_CODEC_PROP_LOSSY | AV_CODEC_PROP_REORDER,
         .profiles  = NULL_IF_CONFIG_SMALL(ff_mpeg2_video_profiles),
     },
-#if FF_API_XVMC
-    {
-        .id        = AV_CODEC_ID_MPEG2VIDEO_XVMC,
-        .type      = AVMEDIA_TYPE_VIDEO,
-        .name      = "mpegvideo_xvmc",
-        .long_name = NULL_IF_CONFIG_SMALL("MPEG-1/2 video XvMC (X-Video Motion Compensation)"),
-        .props     = AV_CODEC_PROP_LOSSY,
-    },
-#endif /* FF_API_XVMC */
     {
         .id        = AV_CODEC_ID_H261,
         .type      = AVMEDIA_TYPE_VIDEO,
@@ -1212,6 +1203,27 @@ static const AVCodecDescriptor codec_descriptors[] = {
         .long_name = NULL_IF_CONFIG_SMALL("Alliance for Open Media AV1"),
         .props     = AV_CODEC_PROP_LOSSY,
     },
+    {
+        .id        = AV_CODEC_ID_PIXLET,
+        .type      = AVMEDIA_TYPE_VIDEO,
+        .name      = "pixlet",
+        .long_name = NULL_IF_CONFIG_SMALL("Apple Pixlet"),
+        .props     = AV_CODEC_PROP_INTRA_ONLY | AV_CODEC_PROP_LOSSY,
+    },
+    {
+        .id        = AV_CODEC_ID_FMVC,
+        .type      = AVMEDIA_TYPE_VIDEO,
+        .name      = "fmvc",
+        .long_name = NULL_IF_CONFIG_SMALL("FM Screen Capture Codec"),
+        .props     = AV_CODEC_PROP_LOSSLESS,
+    },
+    {
+        .id        = AV_CODEC_ID_CLEARVIDEO,
+        .type      = AVMEDIA_TYPE_VIDEO,
+        .name      = "clearvideo",
+        .long_name = NULL_IF_CONFIG_SMALL("Iterated Systems ClearVideo"),
+        .props     = AV_CODEC_PROP_LOSSY,
+    },
 
     /* image codecs */
     {
@@ -1420,6 +1432,13 @@ static const AVCodecDescriptor codec_descriptors[] = {
         .name      = "xwd",
         .long_name = NULL_IF_CONFIG_SMALL("XWD (X Window Dump) image"),
         .props     = AV_CODEC_PROP_INTRA_ONLY | AV_CODEC_PROP_LOSSLESS,
+    },
+    {
+        .id        = AV_CODEC_ID_CFHD,
+        .type      = AVMEDIA_TYPE_VIDEO,
+        .name      = "cfhd",
+        .long_name = NULL_IF_CONFIG_SMALL("Cineform HD"),
+        .props     = AV_CODEC_PROP_LOSSY,
     },
 
     /* various PCM "codecs" */
@@ -2147,15 +2166,6 @@ static const AVCodecDescriptor codec_descriptors[] = {
         .long_name = NULL_IF_CONFIG_SMALL("ATRAC3 (Adaptive TRansform Acoustic Coding 3)"),
         .props     = AV_CODEC_PROP_LOSSY,
     },
-#if FF_API_VOXWARE
-    {
-        .id        = AV_CODEC_ID_VOXWARE,
-        .type      = AVMEDIA_TYPE_AUDIO,
-        .name      = "voxware",
-        .long_name = NULL_IF_CONFIG_SMALL("Voxware RT29 Metasound"),
-        .props     = AV_CODEC_PROP_LOSSY,
-    },
-#endif
     {
         .id        = AV_CODEC_ID_APE,
         .type      = AVMEDIA_TYPE_AUDIO,

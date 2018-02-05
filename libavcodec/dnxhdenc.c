@@ -52,10 +52,10 @@ static const AVOption options[] = {
 };
 
 static const AVClass class = {
-    "dnxhd",
-    av_default_item_name,
-    options,
-    LIBAVUTIL_VERSION_INT
+    .class_name = "dnxhd",
+    .item_name  = av_default_item_name,
+    .option     = options,
+    .version    = LIBAVUTIL_VERSION_INT,
 };
 
 static void dnxhd_8bit_get_pixels_8x4_sym(int16_t *restrict block,
@@ -313,7 +313,7 @@ static av_cold int dnxhd_encode_init(AVCodecContext *avctx)
 
     avctx->bits_per_raw_sample = ctx->cid_table->bit_depth;
 
-    ff_blockdsp_init(&ctx->bdsp, avctx);
+    ff_blockdsp_init(&ctx->bdsp);
     ff_fdctdsp_init(&ctx->m.fdsp, avctx);
     ff_mpv_idct_init(&ctx->m);
     ff_mpegvideoencdsp_init(&ctx->m.mpvencdsp, avctx);
@@ -343,12 +343,6 @@ static av_cold int dnxhd_encode_init(AVCodecContext *avctx)
 
     ctx->m.mb_num = ctx->m.mb_height * ctx->m.mb_width;
 
-#if FF_API_QUANT_BIAS
-FF_DISABLE_DEPRECATION_WARNINGS
-    if (avctx->intra_quant_bias != FF_DEFAULT_QUANT_BIAS)
-        ctx->intra_quant_bias = avctx->intra_quant_bias;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
     // XXX tune lbias/cbias
     if ((ret = dnxhd_init_qmat(ctx, ctx->intra_quant_bias, 0)) < 0)
         return ret;
@@ -822,9 +816,6 @@ static int dnxhd_encode_rdo(AVCodecContext *avctx, DNXHDEncContext *ctx)
             if (bits > ctx->frame_bits)
                 break;
         }
-        // ff_dlog(ctx->m.avctx,
-        //         "lambda %d, up %u, down %u, bits %d, frame %d\n",
-        //         lambda, last_higher, last_lower, bits, ctx->frame_bits);
         if (end) {
             if (bits > ctx->frame_bits)
                 return AVERROR(EINVAL);
@@ -853,7 +844,6 @@ static int dnxhd_encode_rdo(AVCodecContext *avctx, DNXHDEncContext *ctx)
             down_step = 1<<LAMBDA_FRAC_BITS;
         }
     }
-    //ff_dlog(ctx->m.avctx, "out lambda %d\n", lambda);
     ctx->lambda = lambda;
     return 0;
 }
@@ -882,10 +872,6 @@ static int dnxhd_find_qscale(DNXHDEncContext *ctx)
             if (bits > ctx->frame_bits)
                 break;
         }
-        // ff_dlog(ctx->m.avctx,
-        //         "%d, qscale %d, bits %d, frame %d, higher %d, lower %d\n",
-        //         ctx->m.avctx->frame_number, qscale, bits, ctx->frame_bits,
-        //         last_higher, last_lower);
         if (bits < ctx->frame_bits) {
             if (qscale == 1)
                 return 1;
@@ -914,7 +900,6 @@ static int dnxhd_find_qscale(DNXHDEncContext *ctx)
                 return AVERROR(EINVAL);
         }
     }
-    //ff_dlog(ctx->m.avctx, "out qscale %d\n", qscale);
     ctx->qscale = qscale;
     return 0;
 }

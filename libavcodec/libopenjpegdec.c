@@ -396,7 +396,7 @@ static int libopenjpeg_decode_frame(AVCodecContext *avctx,
         }
         break;
     default:
-        av_log(avctx, AV_LOG_ERROR, "unsupported pixel size %d\n", pixel_size);
+        avpriv_report_missing_feature(avctx, "Pixel size %d", pixel_size);
         ret = AVERROR_PATCHWELCOME;
         goto done;
     }
@@ -438,4 +438,5 @@ AVCodec ff_libopenjpeg_decoder = {
     .decode         = libopenjpeg_decode_frame,
     .capabilities   = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_FRAME_THREADS,
     .priv_class     = &class,
+    .wrapper_name   = "libopenjpeg",
 };

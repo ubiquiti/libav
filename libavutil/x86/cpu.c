@@ -28,7 +28,7 @@
 #include "libavutil/cpu.h"
 #include "libavutil/cpu_internal.h"
 
-#if HAVE_YASM
+#if HAVE_X86ASM
 
 #define cpuid(index, eax, ebx, ecx, edx)        \
     ff_cpu_cpuid(index, &eax, &ebx, &ecx, &edx)
@@ -66,7 +66,7 @@
 
 #define cpuid_test() 1
 
-#elif HAVE_YASM
+#elif HAVE_X86ASM
 
 #define cpuid_test ff_cpu_cpuid_test
 
@@ -232,4 +232,15 @@ int ff_get_cpu_flags_x86(void)
 #endif /* cpuid */
 
     return rval;
+}
+
+size_t ff_get_cpu_max_align_x86(void)
+{
+    int flags = av_get_cpu_flags();
+
+    if (flags & AV_CPU_FLAG_AVX)
+        return 32;
+    if (flags & AV_CPU_FLAG_SSE)
+        return 16;
+    return 8;
 }

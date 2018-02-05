@@ -46,6 +46,7 @@
 #   define FPU @
 #endif
 
+#if HAVE_AS_ARCH_DIRECTIVE
 #if   HAVE_NEON
         .arch           armv7-a
 #elif HAVE_ARMV6T2
@@ -54,6 +55,7 @@
         .arch           armv6
 #elif HAVE_ARMV5TE
         .arch           armv5te
+#endif
 #endif
 #if   HAVE_AS_OBJECT_ARCH
 ELF     .object_arch    armv4
@@ -82,6 +84,9 @@ ELF     .section .note.GNU-stack,"",%progbits @ Mark stack as non-executable
         .altmacro
         put_pic         %(.Lpic_idx - 1)
         .noaltmacro
+      .endif
+      .if .Lpic_gp
+        .unreq          gp
       .endif
 ELF     .size   \name, . - \name
 FUNC    .endfunc
@@ -181,6 +186,15 @@ T       ldr             \rd, [\rd]
 .endm
 
 .macro  movrelx         rd,  val, gp
+    .ifc \rd,\gp
+        .error      "movrelx needs two distinct registers"
+    .endif
+    .ifc \rd\()_\gp,r12_
+        .warning    "movrelx rd=\rd without explicit set gp"
+    .endif
+    .ifc \rd\()_\gp,ip_
+        .warning    "movrelx rd=\rd without explicit set gp"
+    .endif
 #if CONFIG_PIC && defined(__ELF__)
     .ifnb \gp
       .if .Lpic_gp

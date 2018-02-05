@@ -20,7 +20,7 @@
  */
 
 #include "avcodec.h"
-#include "get_bits.h"
+#include "bitstream.h"
 #include "bytestream.h"
 #include "internal.h"
 #include "libavutil/colorspace.h"
@@ -33,63 +33,6 @@
 #define DVBSUB_DISPLAY_SEGMENT  0x80
 
 #define cm (ff_crop_tab + MAX_NEG_CROP)
-
-#ifdef DEBUG
-static void png_save(const char *filename, uint32_t *bitmap, int w, int h)
-{
-    int x, y, v;
-    FILE *f;
-    char fname[40], fname2[40];
-    char command[1024];
-
-    snprintf(fname, sizeof(fname), "%s.ppm", filename);
-
-    f = fopen(fname, "w");
-    if (!f) {
-        perror(fname);
-        return;
-    }
-    fprintf(f, "P6\n"
-            "%d %d\n"
-            "%d\n",
-            w, h, 255);
-    for(y = 0; y < h; y++) {
-        for(x = 0; x < w; x++) {
-            v = bitmap[y * w + x];
-            putc((v >> 16) & 0xff, f);
-            putc((v >> 8) & 0xff, f);
-            putc((v >> 0) & 0xff, f);
-        }
-    }
-    fclose(f);
-
-
-    snprintf(fname2, sizeof(fname2), "%s-a.pgm", filename);
-
-    f = fopen(fname2, "w");
-    if (!f) {
-        perror(fname2);
-        return;
-    }
-    fprintf(f, "P5\n"
-            "%d %d\n"
-            "%d\n",
-            w, h, 255);
-    for(y = 0; y < h; y++) {
-        for(x = 0; x < w; x++) {
-            v = bitmap[y * w + x];
-            putc((v >> 24) & 0xff, f);
-        }
-    }
-    fclose(f);
-
-    snprintf(command, sizeof(command), "pnmtopng -alpha %s %s > %s.png 2> /dev/null", fname2, fname, filename);
-    system(command);
-
-    snprintf(command, sizeof(command), "rm %s %s", fname, fname2);
-    system(command);
-}
-#endif
 
 #define RGBA(r,g,b,a) (((unsigned)(a) << 24) | ((r) << 16) | ((g) << 8) | (b))
 
@@ -387,16 +330,16 @@ static int dvbsub_read_2bit_string(uint8_t *destbuf, int dbuf_len,
                                    const uint8_t **srcbuf, int buf_size,
                                    int non_mod, uint8_t *map_table)
 {
-    GetBitContext gb;
+    BitstreamContext bc;
 
     int bits;
     int run_length;
     int pixels_read = 0;
 
-    init_get_bits(&gb, *srcbuf, buf_size << 3);
+    bitstream_init8(&bc, *srcbuf, buf_size);
 
-    while (get_bits_count(&gb) < buf_size << 3 && pixels_read < dbuf_len) {
-        bits = get_bits(&gb, 2);
+    while (bitstream_tell(&bc) < buf_size << 3 && pixels_read < dbuf_len) {
+        bits = bitstream_read(&bc, 2);
 
         if (bits) {
             if (non_mod != 1 || bits != 1) {
@@ -407,10 +350,10 @@ static int dvbsub_read_2bit_string(uint8_t *destbuf, int dbuf_len,
             }
             pixels_read++;
         } else {
-            bits = get_bits1(&gb);
+            bits = bitstream_read_bit(&bc);
             if (bits == 1) {
-                run_length = get_bits(&gb, 3) + 3;
-                bits = get_bits(&gb, 2);
+                run_length = bitstream_read(&bc, 3) + 3;
+                bits       = bitstream_read(&bc, 2);
 
                 if (non_mod == 1 && bits == 1)
                     pixels_read += run_length;
@@ -423,12 +366,12 @@ static int dvbsub_read_2bit_string(uint8_t *destbuf, int dbuf_len,
                     }
                 }
             } else {
-                bits = get_bits1(&gb);
+                bits = bitstream_read_bit(&bc);
                 if (bits == 0) {
-                    bits = get_bits(&gb, 2);
+                    bits = bitstream_read(&bc, 2);
                     if (bits == 2) {
-                        run_length = get_bits(&gb, 4) + 12;
-                        bits = get_bits(&gb, 2);
+                        run_length = bitstream_read(&bc, 4) + 12;
+                        bits       = bitstream_read(&bc, 2);
 
                         if (non_mod == 1 && bits == 1)
                             pixels_read += run_length;
@@ -441,8 +384,8 @@ static int dvbsub_read_2bit_string(uint8_t *destbuf, int dbuf_len,
                             }
                         }
                     } else if (bits == 3) {
-                        run_length = get_bits(&gb, 8) + 29;
-                        bits = get_bits(&gb, 2);
+                        run_length = bitstream_read(&bc, 8) + 29;
+                        bits = bitstream_read(&bc, 2);
 
                         if (non_mod == 1 && bits == 1)
                             pixels_read += run_length;
@@ -465,7 +408,7 @@ static int dvbsub_read_2bit_string(uint8_t *destbuf, int dbuf_len,
                             *destbuf++ = bits;
                         }
                     } else {
-                        (*srcbuf) += (get_bits_count(&gb) + 7) >> 3;
+                        *srcbuf += (bitstream_tell(&bc) + 7) >> 3;
                         return pixels_read;
                     }
                 } else {
@@ -480,10 +423,10 @@ static int dvbsub_read_2bit_string(uint8_t *destbuf, int dbuf_len,
         }
     }
 
-    if (get_bits(&gb, 6))
+    if (bitstream_read(&bc, 6))
         av_log(NULL, AV_LOG_ERROR, "DVBSub error: line overflow\n");
 
-    (*srcbuf) += (get_bits_count(&gb) + 7) >> 3;
+    *srcbuf += (bitstream_tell(&bc) + 7) >> 3;
 
     return pixels_read;
 }
@@ -492,16 +435,16 @@ static int dvbsub_read_4bit_string(uint8_t *destbuf, int dbuf_len,
                                    const uint8_t **srcbuf, int buf_size,
                                    int non_mod, uint8_t *map_table)
 {
-    GetBitContext gb;
+    BitstreamContext bc;
 
     int bits;
     int run_length;
     int pixels_read = 0;
 
-    init_get_bits(&gb, *srcbuf, buf_size << 3);
+    bitstream_init8(&bc, *srcbuf, buf_size);
 
-    while (get_bits_count(&gb) < buf_size << 3 && pixels_read < dbuf_len) {
-        bits = get_bits(&gb, 4);
+    while (bitstream_tell(&bc) < buf_size << 3 && pixels_read < dbuf_len) {
+        bits = bitstream_read(&bc, 4);
 
         if (bits) {
             if (non_mod != 1 || bits != 1) {
@@ -512,12 +455,12 @@ static int dvbsub_read_4bit_string(uint8_t *destbuf, int dbuf_len,
             }
             pixels_read++;
         } else {
-            bits = get_bits1(&gb);
+            bits = bitstream_read_bit(&bc);
             if (bits == 0) {
-                run_length = get_bits(&gb, 3);
+                run_length = bitstream_read(&bc, 3);
 
                 if (run_length == 0) {
-                    (*srcbuf) += (get_bits_count(&gb) + 7) >> 3;
+                    *srcbuf += (bitstream_tell(&bc) + 7) >> 3;
                     return pixels_read;
                 }
 
@@ -533,10 +476,10 @@ static int dvbsub_read_4bit_string(uint8_t *destbuf, int dbuf_len,
                     pixels_read++;
                 }
             } else {
-                bits = get_bits1(&gb);
+                bits = bitstream_read_bit(&bc);
                 if (bits == 0) {
-                    run_length = get_bits(&gb, 2) + 4;
-                    bits = get_bits(&gb, 4);
+                    run_length = bitstream_read(&bc, 2) + 4;
+                    bits       = bitstream_read(&bc, 4);
 
                     if (non_mod == 1 && bits == 1)
                         pixels_read += run_length;
@@ -549,10 +492,10 @@ static int dvbsub_read_4bit_string(uint8_t *destbuf, int dbuf_len,
                         }
                     }
                 } else {
-                    bits = get_bits(&gb, 2);
+                    bits = bitstream_read(&bc, 2);
                     if (bits == 2) {
-                        run_length = get_bits(&gb, 4) + 9;
-                        bits = get_bits(&gb, 4);
+                        run_length = bitstream_read(&bc, 4) + 9;
+                        bits       = bitstream_read(&bc, 4);
 
                         if (non_mod == 1 && bits == 1)
                             pixels_read += run_length;
@@ -565,8 +508,8 @@ static int dvbsub_read_4bit_string(uint8_t *destbuf, int dbuf_len,
                             }
                         }
                     } else if (bits == 3) {
-                        run_length = get_bits(&gb, 8) + 25;
-                        bits = get_bits(&gb, 4);
+                        run_length = bitstream_read(&bc, 8) + 25;
+                        bits = bitstream_read(&bc, 4);
 
                         if (non_mod == 1 && bits == 1)
                             pixels_read += run_length;
@@ -601,10 +544,10 @@ static int dvbsub_read_4bit_string(uint8_t *destbuf, int dbuf_len,
         }
     }
 
-    if (get_bits(&gb, 8))
+    if (bitstream_read(&bc, 8))
         av_log(NULL, AV_LOG_ERROR, "DVBSub error: line overflow\n");
 
-    (*srcbuf) += (get_bits_count(&gb) + 7) >> 3;
+    *srcbuf += (bitstream_tell(&bc) + 7) >> 3;
 
     return pixels_read;
 }
@@ -1117,6 +1060,67 @@ static int dvbsub_parse_page_segment(AVCodecContext *avctx,
 
 
 #ifdef DEBUG
+static void png_save(const char *filename, uint32_t *bitmap, int w, int h)
+{
+    int x, y, v;
+    FILE *f;
+    char fname[40], fname2[40];
+    char command[1024];
+
+    snprintf(fname, sizeof(fname), "%s.ppm", filename);
+
+    f = fopen(fname, "w");
+    if (!f) {
+        perror(fname);
+        return;
+    }
+    fprintf(f, "P6\n"
+            "%d %d\n"
+            "%d\n",
+            w, h, 255);
+    for(y = 0; y < h; y++) {
+        for(x = 0; x < w; x++) {
+            v = bitmap[y * w + x];
+            putc((v >> 16) & 0xff, f);
+            putc((v >> 8) & 0xff, f);
+            putc((v >> 0) & 0xff, f);
+        }
+    }
+    fclose(f);
+
+
+    snprintf(fname2, sizeof(fname2), "%s-a.pgm", filename);
+
+    f = fopen(fname2, "w");
+    if (!f) {
+        perror(fname2);
+        return;
+    }
+    fprintf(f, "P5\n"
+            "%d %d\n"
+            "%d\n",
+            w, h, 255);
+    for(y = 0; y < h; y++) {
+        for(x = 0; x < w; x++) {
+            v = bitmap[y * w + x];
+            putc((v >> 24) & 0xff, f);
+        }
+    }
+    fclose(f);
+
+    snprintf(command, sizeof(command), "pnmtopng -alpha %s %s > %s.png 2> /dev/null", fname2, fname, filename);
+    if (system(command) != 0) {
+        printf("Error running pnmtopng\n");
+        return;
+    }
+
+    snprintf(command, sizeof(command), "rm %s %s", fname, fname2);
+    if (system(command) != 0) {
+        printf("Error removing %s and %s\n", fname, fname2);
+        return;
+    }
+}
+
 static int save_display_set(DVBSubContext *ctx)
 {
     DVBSubRegion *region;
@@ -1212,7 +1216,7 @@ static int save_display_set(DVBSubContext *ctx)
     fileno_index++;
     return 0;
 }
-#endif
+#endif /* DEBUG */
 
 static int dvbsub_parse_display_definition_segment(AVCodecContext *avctx,
                                                    const uint8_t *buf,
@@ -1281,13 +1285,22 @@ static int dvbsub_display_end_segment(AVCodecContext *avctx, const uint8_t *buf,
     }
 
     sub->num_rects = ctx->display_list_size;
-    if (sub->num_rects <= 0)
-        return AVERROR_INVALIDDATA;
 
-    sub->rects = av_mallocz_array(sub->num_rects * sub->num_rects,
-                                  sizeof(*sub->rects));
-    if (!sub->rects)
-        return AVERROR(ENOMEM);
+    if (sub->num_rects > 0) {
+        sub->rects = av_mallocz(sizeof(*sub->rects) * sub->num_rects);
+        if (!sub->rects)
+            return AVERROR(ENOMEM);
+        for (i = 0; i < sub->num_rects; i++) {
+            sub->rects[i] = av_mallocz(sizeof(*sub->rects[i]));
+            if (!sub->rects[i]) {
+                int j;
+                for (j = 0; j < i; j ++)
+                    av_free(sub->rects[j]);
+                av_free(sub->rects);
+                return AVERROR(ENOMEM);
+            }
+        }
+    }
 
     i = 0;
 
@@ -1326,6 +1339,8 @@ static int dvbsub_display_end_segment(AVCodecContext *avctx, const uint8_t *buf,
 
         rect->data[1] = av_mallocz(AVPALETTE_SIZE);
         if (!rect->data[1]) {
+            for (i = 0; i < sub->num_rects; i++)
+                av_free(sub->rects[i]);
             av_free(sub->rects);
             return AVERROR(ENOMEM);
         }
@@ -1334,6 +1349,8 @@ static int dvbsub_display_end_segment(AVCodecContext *avctx, const uint8_t *buf,
         rect->data[0] = av_malloc(region->buf_size);
         if (!rect->data[0]) {
             av_free(rect->data[1]);
+            for (i = 0; i < sub->num_rects; i++)
+                av_free(sub->rects[i]);
             av_free(sub->rects);
             return AVERROR(ENOMEM);
         }

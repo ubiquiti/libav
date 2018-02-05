@@ -58,6 +58,7 @@ typedef struct FLVContext {
     int validate_next;
     int validate_count;
     int searched_for_end;
+    AVRational framerate;
 } FLVContext;
 
 static int flv_probe(AVProbeData *p)
@@ -77,10 +78,14 @@ static int flv_probe(AVProbeData *p)
 
 static AVStream *create_stream(AVFormatContext *s, int codec_type)
 {
+    FLVContext *flv = s->priv_data;
     AVStream *st = avformat_new_stream(s, NULL);
     if (!st)
         return NULL;
     st->codecpar->codec_type = codec_type;
+    if (codec_type == AVMEDIA_TYPE_VIDEO)
+        st->avg_frame_rate = flv->framerate;
+
     avpriv_set_pts_info(st, 32, 1, 1000); /* 32 bit pts in ms */
     return st;
 }
@@ -460,6 +465,10 @@ static int amf_parse_object(AVFormatContext *s, AVStream *astream,
                     if (!st)
                         return AVERROR(ENOMEM);
                     st->codecpar->codec_id = AV_CODEC_ID_TEXT;
+                } else if (!strcmp(key, "framerate")) {
+                    flv->framerate = av_d2q(num_val, 1000);
+                    if (vstream)
+                        vstream->avg_frame_rate = flv->framerate;
                 } else if (flv->trust_metadata) {
                     if (!strcmp(key, "videocodecid") && vpar) {
                         flv_set_video_codec(s, vstream, num_val, 0);
@@ -792,7 +801,13 @@ static int flv_read_packet(AVFormatContext *s, AVPacket *pkt)
                            type, size, flags);
 
 skip:
-            avio_seek(s->pb, next, SEEK_SET);
+            if (avio_seek(s->pb, next, SEEK_SET) != next) {
+                // This can happen if flv_read_metabody above read past
+                // next, on a non-seekable input, and the preceding data has
+                // been flushed out from the IO buffer.
+                av_log(s, AV_LOG_ERROR, "Unable to seek to the next packet\n");
+                return AVERROR_INVALIDDATA;
+            }
             continue;
         }
 
@@ -903,6 +918,12 @@ skip:
         st->codecpar->codec_id == AV_CODEC_ID_H264) {
         int type = avio_r8(s->pb);
         size--;
+
+        if (size < 0) {
+            ret = AVERROR_INVALIDDATA;
+            goto leave;
+        }
+
         if (st->codecpar->codec_id == AV_CODEC_ID_H264) {
             // sign extension
             int32_t cts = (avio_rb24(s->pb) + 0xff800000) ^ 0xff800000;

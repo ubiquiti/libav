@@ -45,6 +45,7 @@
 #include "libavutil/intreadwrite.h"
 #include "libavutil/lzo.h"
 #include "libavutil/mathematics.h"
+#include "libavutil/spherical.h"
 
 #include "libavcodec/bytestream.h"
 #include "libavcodec/flac.h"
@@ -116,6 +117,14 @@ typedef struct MatroskaTrackEncoding {
     MatroskaTrackCompression compression;
 } MatroskaTrackEncoding;
 
+typedef struct MatroskaTrackVideoProjection {
+    uint64_t type;
+    EbmlBin private;
+    double yaw;
+    double pitch;
+    double roll;
+} MatroskaTrackVideoProjection;
+
 typedef struct MatroskaTrackVideo {
     double   frame_rate;
     uint64_t display_width;
@@ -126,6 +135,7 @@ typedef struct MatroskaTrackVideo {
     uint64_t interlaced;
     uint64_t field_order;
     uint64_t stereo_mode;
+    MatroskaTrackVideoProjection projection;
 } MatroskaTrackVideo;
 
 typedef struct MatroskaTrackAudio {
@@ -309,6 +319,15 @@ static EbmlSyntax matroska_info[] = {
     { 0 }
 };
 
+static const EbmlSyntax matroska_track_video_projection[] = {
+    { MATROSKA_ID_VIDEOPROJECTIONTYPE,      EBML_UINT,  0, offsetof(MatroskaTrackVideoProjection, type), { .u = MATROSKA_VIDEO_PROJECTION_TYPE_RECTANGULAR } },
+    { MATROSKA_ID_VIDEOPROJECTIONPRIVATE,   EBML_BIN,   0, offsetof(MatroskaTrackVideoProjection, private) },
+    { MATROSKA_ID_VIDEOPROJECTIONPOSEYAW,   EBML_FLOAT, 0, offsetof(MatroskaTrackVideoProjection, yaw), { .f=0.0 } },
+    { MATROSKA_ID_VIDEOPROJECTIONPOSEPITCH, EBML_FLOAT, 0, offsetof(MatroskaTrackVideoProjection, pitch), { .f=0.0 } },
+    { MATROSKA_ID_VIDEOPROJECTIONPOSEROLL,  EBML_FLOAT, 0, offsetof(MatroskaTrackVideoProjection, roll), { .f=0.0 } },
+    { 0 }
+};
+
 static EbmlSyntax matroska_track_video[] = {
     { MATROSKA_ID_VIDEOFRAMERATE,      EBML_FLOAT, 0, offsetof(MatroskaTrackVideo, frame_rate) },
     { MATROSKA_ID_VIDEODISPLAYWIDTH,   EBML_UINT,  0, offsetof(MatroskaTrackVideo, display_width) },
@@ -316,6 +335,7 @@ static EbmlSyntax matroska_track_video[] = {
     { MATROSKA_ID_VIDEOPIXELWIDTH,     EBML_UINT,  0, offsetof(MatroskaTrackVideo, pixel_width) },
     { MATROSKA_ID_VIDEOPIXELHEIGHT,    EBML_UINT,  0, offsetof(MatroskaTrackVideo, pixel_height) },
     { MATROSKA_ID_VIDEOCOLORSPACE,     EBML_UINT,  0, offsetof(MatroskaTrackVideo, fourcc) },
+    { MATROSKA_ID_VIDEOPROJECTION,     EBML_NEST,  0, offsetof(MatroskaTrackVideo, projection), { .n = matroska_track_video_projection } },
     { MATROSKA_ID_VIDEOPIXELCROPB,     EBML_NONE },
     { MATROSKA_ID_VIDEOPIXELCROPT,     EBML_NONE },
     { MATROSKA_ID_VIDEOPIXELCROPL,     EBML_NONE },
@@ -750,15 +770,18 @@ static int ebml_read_ascii(AVIOContext *pb, int size, char **str)
 static int ebml_read_binary(AVIOContext *pb, int length, EbmlBin *bin)
 {
     av_free(bin->data);
+    bin->size = 0;
+
     if (!(bin->data = av_mallocz(length + AV_INPUT_BUFFER_PADDING_SIZE)))
         return AVERROR(ENOMEM);
 
-    bin->size = length;
     bin->pos  = avio_tell(pb);
     if (avio_read(pb, bin->data, length) != length) {
         av_freep(&bin->data);
         return AVERROR(EIO);
     }
+
+    bin->size = length;
 
     return 0;
 }
@@ -1573,6 +1596,105 @@ static void mkv_stereo_mode_display_mul(int stereo_mode,
     }
 }
 
+static int mkv_parse_video_projection(AVStream *st, const MatroskaTrack *track)
+{
+    AVSphericalMapping *spherical;
+    enum AVSphericalProjection projection;
+    size_t spherical_size;
+    uint32_t l = 0, t = 0, r = 0, b = 0;
+    uint32_t padding = 0;
+    int ret;
+    GetByteContext gb;
+
+    bytestream2_init(&gb, track->video.projection.private.data,
+                     track->video.projection.private.size);
+
+    if (bytestream2_get_byte(&gb) != 0) {
+        av_log(NULL, AV_LOG_WARNING, "Unknown spherical metadata\n");
+        return 0;
+    }
+
+    bytestream2_skip(&gb, 3); // flags
+
+    switch (track->video.projection.type) {
+    case MATROSKA_VIDEO_PROJECTION_TYPE_EQUIRECTANGULAR:
+        if (track->video.projection.private.size == 20) {
+            t = bytestream2_get_be32(&gb);
+            b = bytestream2_get_be32(&gb);
+            l = bytestream2_get_be32(&gb);
+            r = bytestream2_get_be32(&gb);
+
+            if (b >= UINT_MAX - t || r >= UINT_MAX - l) {
+                av_log(NULL, AV_LOG_ERROR,
+                       "Invalid bounding rectangle coordinates "
+                       "%"PRIu32",%"PRIu32",%"PRIu32",%"PRIu32"\n", l, t, r, b);
+                return AVERROR_INVALIDDATA;
+            }
+        } else if (track->video.projection.private.size != 0) {
+            av_log(NULL, AV_LOG_ERROR, "Unknown spherical metadata\n");
+            return AVERROR_INVALIDDATA;
+        }
+
+        if (l || t || r || b)
+            projection = AV_SPHERICAL_EQUIRECTANGULAR_TILE;
+        else
+            projection = AV_SPHERICAL_EQUIRECTANGULAR;
+        break;
+    case MATROSKA_VIDEO_PROJECTION_TYPE_CUBEMAP:
+        if (track->video.projection.private.size < 4) {
+            av_log(NULL, AV_LOG_ERROR, "Missing projection private properties\n");
+            return AVERROR_INVALIDDATA;
+        } else if (track->video.projection.private.size == 12) {
+            uint32_t layout = bytestream2_get_be32(&gb);
+            if (layout) {
+                av_log(NULL, AV_LOG_WARNING,
+                       "Unknown spherical cubemap layout %"PRIu32"\n", layout);
+                return 0;
+            }
+            projection = AV_SPHERICAL_CUBEMAP;
+            padding = bytestream2_get_be32(&gb);
+        } else {
+            av_log(NULL, AV_LOG_ERROR, "Unknown spherical metadata\n");
+            return AVERROR_INVALIDDATA;
+        }
+        break;
+    case MATROSKA_VIDEO_PROJECTION_TYPE_RECTANGULAR:
+        /* No Spherical metadata */
+        return 0;
+    default:
+        av_log(NULL, AV_LOG_WARNING,
+               "Unknown spherical metadata type %"PRIu64"\n",
+               track->video.projection.type);
+        return 0;
+    }
+
+    spherical = av_spherical_alloc(&spherical_size);
+    if (!spherical)
+        return AVERROR(ENOMEM);
+
+    spherical->projection = projection;
+
+    spherical->yaw   = (int32_t) (track->video.projection.yaw   * (1 << 16));
+    spherical->pitch = (int32_t) (track->video.projection.pitch * (1 << 16));
+    spherical->roll  = (int32_t) (track->video.projection.roll  * (1 << 16));
+
+    spherical->padding = padding;
+
+    spherical->bound_left   = l;
+    spherical->bound_top    = t;
+    spherical->bound_right  = r;
+    spherical->bound_bottom = b;
+
+    ret = av_stream_add_side_data(st, AV_PKT_DATA_SPHERICAL, (uint8_t *)spherical,
+                                  spherical_size);
+    if (ret < 0) {
+        av_free(spherical);
+        return ret;
+    }
+
+    return 0;
+}
+
 static int matroska_parse_tracks(AVFormatContext *s)
 {
     MatroskaDemuxContext *matroska = s->priv_data;
@@ -1794,7 +1916,7 @@ static int matroska_parse_tracks(AVFormatContext *s)
             track->audio.sub_packet_h    = avio_rb16(&b);
             track->audio.frame_size      = avio_rb16(&b);
             track->audio.sub_packet_size = avio_rb16(&b);
-            if (flavor                       <= 0 ||
+            if (flavor                        < 0 ||
                 track->audio.coded_framesize <= 0 ||
                 track->audio.sub_packet_h    <= 0 ||
                 track->audio.frame_size      <= 0 ||
@@ -1905,6 +2027,10 @@ static int matroska_parse_tracks(AVFormatContext *s)
                 if (ret < 0)
                     return ret;
             }
+
+            ret = mkv_parse_video_projection(st, track);
+            if (ret < 0)
+                return ret;
         } else if (track->type == MATROSKA_TRACK_TYPE_AUDIO) {
             st->codecpar->codec_type  = AVMEDIA_TYPE_AUDIO;
             st->codecpar->sample_rate = track->audio.out_samplerate;
@@ -1947,10 +2073,9 @@ static int matroska_read_header(AVFormatContext *s)
         ebml.max_size        > sizeof(uint64_t)  ||
         ebml.id_length       > sizeof(uint32_t)  ||
         ebml.doctype_version > 3) {
-        av_log(matroska->ctx, AV_LOG_ERROR,
-               "EBML header using unsupported features\n"
-               "(EBML version %"PRIu64", doctype %s, doc version %"PRIu64")\n",
-               ebml.version, ebml.doctype, ebml.doctype_version);
+        avpriv_report_missing_feature(matroska->ctx,
+                                      "EBML version %"PRIu64", doctype %s, doc version %"PRIu64,
+                                      ebml.version, ebml.doctype, ebml.doctype_version);
         ebml_free(ebml_syntax, &ebml);
         return AVERROR_PATCHWELCOME;
     }
@@ -2440,11 +2565,11 @@ static int matroska_parse_frame(MatroskaDemuxContext *matroska,
     else
         pkt->pts = timecode;
     pkt->pos = pos;
-    if (track->type != MATROSKA_TRACK_TYPE_SUBTITLE || st->codecpar->codec_id == AV_CODEC_ID_TEXT)
+    if (track->type != MATROSKA_TRACK_TYPE_SUBTITLE || st->codecpar->codec_id == AV_CODEC_ID_SRT)
         pkt->duration = duration;
 #if FF_API_CONVERGENCE_DURATION
 FF_DISABLE_DEPRECATION_WARNINGS
-    if (st->codecpar->codec_id == AV_CODEC_ID_TEXT)
+    if (st->codecpar->codec_id == AV_CODEC_ID_SRT)
         pkt->convergence_duration = duration;
 FF_ENABLE_DEPRECATION_WARNINGS
 #endif

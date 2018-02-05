@@ -21,6 +21,8 @@
 #ifndef AVUTIL_CPU_H
 #define AVUTIL_CPU_H
 
+#include <stddef.h>
+
 #include "version.h"
 
 #define AV_CPU_FLAG_FORCE    0x80000000 /* force usage of selected flags (OR) */
@@ -73,8 +75,6 @@ int av_get_cpu_flags(void);
 /**
  * Set a mask on flags returned by av_get_cpu_flags().
  * This function is mainly useful for testing.
- *
- * @warning this function is not thread safe.
  */
 void av_set_cpu_flags_mask(int mask);
 
@@ -89,5 +89,16 @@ int av_parse_cpu_flags(const char *s);
  * @return the number of logical CPU cores present.
  */
 int av_cpu_count(void);
+
+/**
+ * Get the maximum data alignment that may be required by Libav.
+ *
+ * Note that this is affected by the build configuration and the CPU flags mask,
+ * so e.g. if the CPU supports AVX, but libavutil has been built with
+ * --disable-avx or the AV_CPU_FLAG_AVX flag has been disabled through
+ *  av_set_cpu_flags_mask(), then this function will behave as if AVX is not
+ *  present.
+ */
+size_t av_cpu_max_align(void);
 
 #endif /* AVUTIL_CPU_H */

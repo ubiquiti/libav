@@ -313,7 +313,7 @@ static void wtvfile_close(AVIOContext *pb)
     av_free(wf->sectors);
     av_free(wf);
     av_free(pb->buffer);
-    av_free(pb);
+    avio_context_free(&pb);
 }
 
 /*
@@ -586,7 +586,7 @@ static int parse_videoinfoheader2(AVFormatContext *s, AVStream *st)
     AVIOContext *pb = wtv->pb;
 
     avio_skip(pb, 72);  // picture aspect ratio is unreliable
-    ff_get_bmp_header(pb, st);
+    ff_get_bmp_header(pb, st, NULL);
 
     return 72 + 40;
 }

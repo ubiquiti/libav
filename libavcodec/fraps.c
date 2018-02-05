@@ -32,7 +32,7 @@
  */
 
 #include "avcodec.h"
-#include "get_bits.h"
+#include "bitstream.h"
 #include "huffman.h"
 #include "bytestream.h"
 #include "bswapdsp.h"
@@ -94,7 +94,7 @@ static int fraps2_decode_plane(FrapsContext *s, uint8_t *dst, int stride, int w,
                                const int step)
 {
     int i, j, ret;
-    GetBitContext gb;
+    BitstreamContext bc;
     VLC vlc;
     Node nodes[512];
 
@@ -111,10 +111,10 @@ static int fraps2_decode_plane(FrapsContext *s, uint8_t *dst, int stride, int w,
     s->bdsp.bswap_buf((uint32_t *) s->tmpbuf,
                       (const uint32_t *) src, size >> 2);
 
-    init_get_bits(&gb, s->tmpbuf, size * 8);
+    bitstream_init8(&bc, s->tmpbuf, size);
     for (j = 0; j < h; j++) {
         for (i = 0; i < w*step; i += step) {
-            dst[i] = get_vlc2(&gb, vlc.table, VLC_BITS, 3);
+            dst[i] = bitstream_read_vlc(&bc, vlc.table, VLC_BITS, 3);
             /* lines are stored as deltas between previous lines
              * and we need to add 0x80 to the first lines of chroma planes
              */
@@ -122,7 +122,7 @@ static int fraps2_decode_plane(FrapsContext *s, uint8_t *dst, int stride, int w,
                 dst[i] += dst[i - stride];
             else if (Uoff)
                 dst[i] += 0x80;
-            if (get_bits_left(&gb) < 0) {
+            if (bitstream_bits_left(&bc) < 0) {
                 ff_free_vlc(&vlc);
                 return AVERROR_INVALIDDATA;
             }
@@ -163,9 +163,7 @@ static int decode_frame(AVCodecContext *avctx,
     prev_pic_bit = header & (1U << 31); /* bit 31 means same as previous pic */
 
     if (version > 5) {
-        av_log(avctx, AV_LOG_ERROR,
-               "This file is encoded with Fraps version %d. " \
-               "This codec can only decode versions <= 5.\n", version);
+        avpriv_report_missing_feature(avctx, "Fraps version %u", version);
         return AVERROR_PATCHWELCOME;
     }
 
@@ -385,4 +383,5 @@ AVCodec ff_fraps_decoder = {
     .close          = decode_end,
     .decode         = decode_frame,
     .capabilities   = AV_CODEC_CAP_DR1,
+    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE,
 };

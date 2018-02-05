@@ -47,6 +47,7 @@ static const AVOption options[] = {
     { "high_444", "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_H264_PROFILE_HIGH_444 },            0, 0, VE, "profile" },
     { "constrained_high", "",                             0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_H264_PROFILE_CONSTRAINED_HIGH },    0, 0, VE, "profile" },
     { "level",    "Set the encoding level restriction",   OFFSET(level),       AV_OPT_TYPE_INT,    { .i64 = NV_ENC_LEVEL_AUTOSELECT }, NV_ENC_LEVEL_AUTOSELECT, NV_ENC_LEVEL_H264_51, VE, "level" },
+    { "auto",     "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_LEVEL_AUTOSELECT }, 0, 0, VE, "level" },
     { "1.0",      "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_LEVEL_H264_1 },  0, 0, VE,  "level" },
     { "1.b",      "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_LEVEL_H264_1b }, 0, 0, VE,  "level" },
     { "1.1",      "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_LEVEL_H264_11 }, 0, 0, VE,  "level" },
@@ -71,14 +72,14 @@ static const AVOption options[] = {
     { "ll_2pass_quality", "Multi-pass optimized for image quality (only for low-latency presets)",       0, AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_PARAMS_RC_2_PASS_QUALITY },       0, 0, VE, "rc" },
     { "ll_2pass_size",    "Multi-pass optimized for constant frame size (only for low-latency presets)", 0, AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_PARAMS_RC_2_PASS_FRAMESIZE_CAP }, 0, 0, VE, "rc" },
     { "vbr_2pass",        "Multi-pass variable bitrate mode",                                            0, AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_PARAMS_RC_2_PASS_VBR },           0, 0, VE, "rc" },
-    { "surfaces", "Number of concurrent surfaces",        OFFSET(nb_surfaces), AV_OPT_TYPE_INT,    { .i64 = 32 },                   0, INT_MAX, VE },
+    { "surfaces", "Number of concurrent surfaces",        OFFSET(nb_surfaces), AV_OPT_TYPE_INT,    { .i64 = 0 },                    0, MAX_REGISTERED_FRAMES, VE },
     { "device",   "Select a specific NVENC device",       OFFSET(device),      AV_OPT_TYPE_INT,    { .i64 = -1 },                   -2, INT_MAX, VE, "device" },
     { "any",      "Pick the first device available",      0,                   AV_OPT_TYPE_CONST,  { .i64 = ANY_DEVICE },           0, 0, VE, "device" },
     { "list",     "List the available devices",           0,                   AV_OPT_TYPE_CONST,  { .i64 = LIST_DEVICES },         0, 0, VE, "device" },
     { "async_depth", "Delay frame output by the given amount of frames", OFFSET(async_depth), AV_OPT_TYPE_INT, { .i64 = INT_MAX }, 0, INT_MAX, VE },
     { "delay",       "Delay frame output by the given amount of frames", OFFSET(async_depth), AV_OPT_TYPE_INT, { .i64 = INT_MAX }, 0, INT_MAX, VE },
 #if NVENCAPI_MAJOR_VERSION >= 7
-    { "rc-lookahead", "Number of frames to look ahead for rate-control", OFFSET(rc_lookahead), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, INT_MAX, VE },
+    { "rc-lookahead", "Number of frames to look ahead for rate-control", OFFSET(rc_lookahead), AV_OPT_TYPE_INT, { .i64 = 0 }, -1, INT_MAX, VE },
     { "no-scenecut", "When lookahead is enabled, set this to 1 to disable adaptive I-frame insertion at scene cuts", OFFSET(no_scenecut), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, VE },
     { "b_adapt", "When lookahead is enabled, set this to 0 to disable adaptive B-frame decision", OFFSET(b_adapt), AV_OPT_TYPE_INT, { .i64 = 1 }, 0, 1, VE },
     { "spatial-aq", "set to 1 to enable Spatial AQ", OFFSET(aq), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, VE },
@@ -89,6 +90,9 @@ static const AVOption options[] = {
     { "aq-strength", "When Spatial AQ is enabled, this field is used to specify AQ strength. AQ strength scale is from 1 (low) - 15 (aggressive)", OFFSET(aq_strength), AV_OPT_TYPE_INT, { .i64 = 8 }, 1, 15, VE },
     { "cq", "Set target quality level (0 to 51, 0 means automatic) for constant quality mode in VBR rate control", OFFSET(quality), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 51, VE },
 #endif /* NVENCAPI_MAJOR_VERSION >= 7 */
+    { "init_qpP", "Initial QP value for P-frames",        OFFSET(init_qp_p),   AV_OPT_TYPE_INT,    { .i64 = -1 }, -1, 51, VE },
+    { "init_qpB", "Initial QP value for B-frames",        OFFSET(init_qp_b),   AV_OPT_TYPE_INT,    { .i64 = -1 }, -1, 51, VE },
+    { "init_qpI", "Initial QP value for I-frames",        OFFSET(init_qp_i),   AV_OPT_TYPE_INT,    { .i64 = -1 }, -1, 51, VE },
     { NULL }
 };
 
@@ -106,6 +110,7 @@ static const AVCodecDefault defaults[] = {
     { "qdiff", "-1" },
     { "qblur", "-1" },
     { "qcomp", "-1" },
+    { "refs", "0" },
     { NULL },
 };
 

@@ -28,12 +28,13 @@
 #include <inttypes.h>
 
 #include "libavutil/imgutils.h"
+
+#include "golomb_legacy.h"
 #include "internal.h"
 #include "mathops.h"
 #include "avcodec.h"
 #include "h264data.h"
 #include "h264_ps.h"
-#include "golomb.h"
 
 #define MAX_LOG2_MAX_FRAME_NUM    (12 + 4)
 #define MIN_LOG2_MAX_FRAME_NUM    4
@@ -191,11 +192,13 @@ static inline int decode_vui_parameters(GetBitContext *gb, AVCodecContext *avctx
             sps->color_primaries = get_bits(gb, 8); /* colour_primaries */
             sps->color_trc       = get_bits(gb, 8); /* transfer_characteristics */
             sps->colorspace      = get_bits(gb, 8); /* matrix_coefficients */
-            if (sps->color_primaries >= AVCOL_PRI_NB)
+
+            // Set invalid values to "unspecified"
+            if (!av_color_primaries_name(sps->color_primaries))
                 sps->color_primaries = AVCOL_PRI_UNSPECIFIED;
-            if (sps->color_trc >= AVCOL_TRC_NB)
+            if (!av_color_transfer_name(sps->color_trc))
                 sps->color_trc = AVCOL_TRC_UNSPECIFIED;
-            if (sps->colorspace >= AVCOL_SPC_NB)
+            if (!av_color_space_name(sps->colorspace))
                 sps->colorspace = AVCOL_SPC_UNSPECIFIED;
         }
     }
@@ -496,15 +499,6 @@ int ff_h264_decode_seq_parameter_set(GetBitContext *gb, AVCodecContext *avctx,
             int step_x = 1 << hsub;
             int step_y = (2 - sps->frame_mbs_only_flag) << vsub;
 
-            if (crop_left & (0x1F >> (sps->bit_depth_luma > 8)) &&
-                !(avctx->flags & AV_CODEC_FLAG_UNALIGNED)) {
-                crop_left &= ~(0x1F >> (sps->bit_depth_luma > 8));
-                av_log(avctx, AV_LOG_WARNING,
-                       "Reducing left cropping to %d "
-                       "chroma samples to preserve alignment.\n",
-                       crop_left);
-            }
-
             if (INT_MAX / step_x             <= crop_left               ||
                 INT_MAX / step_x - crop_left <= crop_right              ||
                 16 * sps->mb_width <= step_x * (crop_left + crop_right) ||
@@ -700,9 +694,8 @@ int ff_h264_decode_picture_parameter_set(GetBitContext *gb, AVCodecContext *avct
     sps = (SPS*)ps->sps_list[pps->sps_id]->data;
 
     if (sps->bit_depth_luma > 10) {
-        av_log(avctx, AV_LOG_ERROR,
-               "Unimplemented luma bit depth=%d (max=10)\n",
-               sps->bit_depth_luma);
+        avpriv_report_missing_feature(avctx, "Luma bit depth=%d (max=10)",
+                                      sps->bit_depth_luma);
         ret = AVERROR_PATCHWELCOME;
         goto fail;
     }

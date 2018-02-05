@@ -127,9 +127,8 @@ typedef struct ProbContext {
     uint8_t partition[4][4][3];
 } ProbContext;
 
-typedef void (*vp9_mc_func)(uint8_t *dst, const uint8_t *ref,
-                            ptrdiff_t dst_stride,
-                            ptrdiff_t ref_stride,
+typedef void (*vp9_mc_func)(uint8_t *dst, ptrdiff_t dst_stride,
+                            const uint8_t *ref, ptrdiff_t ref_stride,
                             int h, int mx, int my);
 
 typedef struct VP9DSPContext {
@@ -421,7 +420,8 @@ typedef struct VP9Context {
     // whole-frame cache
     uint8_t *intra_pred_data[3];
     VP9Filter *lflvl;
-    DECLARE_ALIGNED(32, uint8_t, edge_emu_buffer)[71 * 80];
+    // This requires 64 + 8 rows, with 80 bytes stride
+    DECLARE_ALIGNED(32, uint8_t, edge_emu_buffer)[72 * 80];
 
     // block reconstruction intermediates
     int16_t *block_base, *block, *uvblock_base[2], *uvblock[2];
@@ -431,8 +431,12 @@ typedef struct VP9Context {
     DECLARE_ALIGNED(32, uint8_t, tmp_uv)[2][32 * 32];
 } VP9Context;
 
+extern const int8_t ff_vp9_subpel_filters[3][15][8];
+
 void ff_vp9dsp_init(VP9DSPContext *dsp);
 
+void ff_vp9dsp_init_aarch64(VP9DSPContext *dsp);
+void ff_vp9dsp_init_arm(VP9DSPContext *dsp);
 void ff_vp9dsp_init_x86(VP9DSPContext *dsp);
 
 void ff_vp9_fill_mv(VP9Context *s, VP56mv *mv, int mode, int sb);

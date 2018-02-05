@@ -34,6 +34,7 @@
 #include "cabac.h"
 #include "cabac_functions.h"
 #include "error_resilience.h"
+#include "golomb_legacy.h"
 #include "avcodec.h"
 #include "h264.h"
 #include "h264dec.h"
@@ -41,7 +42,6 @@
 #include "h264chroma.h"
 #include "h264_mvpred.h"
 #include "h264_ps.h"
-#include "golomb.h"
 #include "mathops.h"
 #include "mpegutils.h"
 #include "rectangle.h"
@@ -378,6 +378,8 @@ int ff_h264_update_thread_context(AVCodecContext *dst,
     h->avctx->coded_width   = h1->avctx->coded_width;
     h->avctx->width         = h1->avctx->width;
     h->avctx->height        = h1->avctx->height;
+    h->width_from_caller    = h1->width_from_caller;
+    h->height_from_caller   = h1->height_from_caller;
     h->coded_picture_number = h1->coded_picture_number;
     h->first_field          = h1->first_field;
     h->picture_structure    = h1->picture_structure;
@@ -401,6 +403,7 @@ int ff_h264_update_thread_context(AVCodecContext *dst,
 
     h->enable_er       = h1->enable_er;
     h->workaround_bugs = h1->workaround_bugs;
+    h->x264_build      = h1->x264_build;
     h->droppable       = h1->droppable;
 
     // extradata/NAL handling
@@ -471,6 +474,11 @@ static int h264_frame_start(H264Context *h)
 
     pic->f->pict_type = h->slice_ctx[0].slice_type;
 
+    pic->f->crop_left   = h->crop_left;
+    pic->f->crop_right  = h->crop_right;
+    pic->f->crop_top    = h->crop_top;
+    pic->f->crop_bottom = h->crop_bottom;
+
     if (CONFIG_ERROR_RESILIENCE && h->enable_er)
         ff_er_frame_start(&h->slice_ctx[0].er);
 
@@ -501,6 +509,9 @@ static int h264_frame_start(H264Context *h)
     h->postpone_filter = 0;
 
     h->mb_aff_frame = h->ps.sps->mb_aff && (h->picture_structure == PICT_FRAME);
+
+    if (h->sei.unregistered.x264_build >= 0)
+        h->x264_build = h->sei.unregistered.x264_build;
 
     assert(h->cur_pic_ptr->long_ref == 0);
 
@@ -710,10 +721,11 @@ static void init_scan_tables(H264Context *h)
 static enum AVPixelFormat get_pixel_format(H264Context *h)
 {
 #define HWACCEL_MAX (CONFIG_H264_DXVA2_HWACCEL + \
-                     CONFIG_H264_D3D11VA_HWACCEL + \
+                     (CONFIG_H264_D3D11VA_HWACCEL * 2) + \
                      CONFIG_H264_VAAPI_HWACCEL + \
                      (CONFIG_H264_VDA_HWACCEL * 2) + \
-                     CONFIG_H264_VDPAU_HWACCEL)
+                     CONFIG_H264_VDPAU_HWACCEL     + \
+                     CONFIG_H264_CUVID_HWACCEL)
     enum AVPixelFormat pix_fmts[HWACCEL_MAX + 2], *fmt = pix_fmts;
     const enum AVPixelFormat *choices = pix_fmts;
 
@@ -744,6 +756,9 @@ static enum AVPixelFormat get_pixel_format(H264Context *h)
 #if CONFIG_H264_VDPAU_HWACCEL
         *fmt++ = AV_PIX_FMT_VDPAU;
 #endif
+#if CONFIG_H264_CUVID_HWACCEL
+        *fmt++ = AV_PIX_FMT_CUDA;
+#endif
         if (CHROMA444(h)) {
             if (h->avctx->colorspace == AVCOL_SPC_RGB)
                 *fmt++ = AV_PIX_FMT_GBRP;
@@ -762,6 +777,7 @@ static enum AVPixelFormat get_pixel_format(H264Context *h)
 #endif
 #if CONFIG_H264_D3D11VA_HWACCEL
             *fmt++ = AV_PIX_FMT_D3D11VA_VLD;
+            *fmt++ = AV_PIX_FMT_D3D11;
 #endif
 #if CONFIG_H264_VAAPI_HWACCEL
             *fmt++ = AV_PIX_FMT_VAAPI;
@@ -793,37 +809,37 @@ static enum AVPixelFormat get_pixel_format(H264Context *h)
 static int init_dimensions(H264Context *h)
 {
     SPS *sps = h->ps.sps;
-    int width  = h->width  - (sps->crop_right + sps->crop_left);
-    int height = h->height - (sps->crop_top   + sps->crop_bottom);
+    int cr = sps->crop_right;
+    int cl = sps->crop_left;
+    int ct = sps->crop_top;
+    int cb = sps->crop_bottom;
+    int width  = h->width  - (cr + cl);
+    int height = h->height - (ct + cb);
 
     /* handle container cropping */
-    if (FFALIGN(h->avctx->width,  16) == FFALIGN(width,  16) &&
-        FFALIGN(h->avctx->height, 16) == FFALIGN(height, 16)) {
-        width  = h->avctx->width;
-        height = h->avctx->height;
-    }
-
-    if (width <= 0 || height <= 0) {
-        av_log(h->avctx, AV_LOG_ERROR, "Invalid cropped dimensions: %dx%d.\n",
-               width, height);
-        if (h->avctx->err_recognition & AV_EF_EXPLODE)
-            return AVERROR_INVALIDDATA;
-
-        av_log(h->avctx, AV_LOG_WARNING, "Ignoring cropping information.\n");
-        sps->crop_bottom =
-        sps->crop_top    =
-        sps->crop_right  =
-        sps->crop_left   =
-        sps->crop        = 0;
-
-        width  = h->width;
-        height = h->height;
+    if (h->width_from_caller > 0 && h->height_from_caller > 0     &&
+        !sps->crop_top && !sps->crop_left                         &&
+        FFALIGN(h->width_from_caller,  16) == FFALIGN(width,  16) &&
+        FFALIGN(h->height_from_caller, 16) == FFALIGN(height, 16)) {
+        width  = h->width_from_caller;
+        height = h->height_from_caller;
+        cl = 0;
+        ct = 0;
+        cr = h->width - width;
+        cb = h->height - height;
+    } else {
+        h->width_from_caller  = 0;
+        h->height_from_caller = 0;
     }
 
     h->avctx->coded_width  = h->width;
     h->avctx->coded_height = h->height;
     h->avctx->width        = width;
     h->avctx->height       = height;
+    h->crop_right          = cr;
+    h->crop_left           = cl;
+    h->crop_top            = ct;
+    h->crop_bottom         = cb;
 
     return 0;
 }
@@ -839,7 +855,7 @@ static int h264_slice_header_init(H264Context *h)
 
     if (sps->timing_info_present_flag) {
         int64_t den = sps->time_scale;
-        if (h->sei.unregistered.x264_build < 44U)
+        if (h->x264_build < 44U)
             den *= 2;
         av_reduce(&h->avctx->framerate.den, &h->avctx->framerate.num,
                   sps->num_units_in_tick, den, 1 << 30);
@@ -997,40 +1013,40 @@ static int h264_export_frame_props(H264Context *h)
     /* Prioritize picture timing SEI information over used
      * decoding process if it exists. */
 
-    if (sps->pic_struct_present_flag) {
+    if (sps->pic_struct_present_flag && h->sei.picture_timing.present) {
         H264SEIPictureTiming *pt = &h->sei.picture_timing;
         switch (pt->pic_struct) {
-        case SEI_PIC_STRUCT_FRAME:
+        case H264_SEI_PIC_STRUCT_FRAME:
             break;
-        case SEI_PIC_STRUCT_TOP_FIELD:
-        case SEI_PIC_STRUCT_BOTTOM_FIELD:
+        case H264_SEI_PIC_STRUCT_TOP_FIELD:
+        case H264_SEI_PIC_STRUCT_BOTTOM_FIELD:
             cur->f->interlaced_frame = 1;
             break;
-        case SEI_PIC_STRUCT_TOP_BOTTOM:
-        case SEI_PIC_STRUCT_BOTTOM_TOP:
+        case H264_SEI_PIC_STRUCT_TOP_BOTTOM:
+        case H264_SEI_PIC_STRUCT_BOTTOM_TOP:
             if (FIELD_OR_MBAFF_PICTURE(h))
                 cur->f->interlaced_frame = 1;
             else
                 // try to flag soft telecine progressive
                 cur->f->interlaced_frame = h->prev_interlaced_frame;
             break;
-        case SEI_PIC_STRUCT_TOP_BOTTOM_TOP:
-        case SEI_PIC_STRUCT_BOTTOM_TOP_BOTTOM:
+        case H264_SEI_PIC_STRUCT_TOP_BOTTOM_TOP:
+        case H264_SEI_PIC_STRUCT_BOTTOM_TOP_BOTTOM:
             /* Signal the possibility of telecined film externally
              * (pic_struct 5,6). From these hints, let the applications
              * decide if they apply deinterlacing. */
             cur->f->repeat_pict = 1;
             break;
-        case SEI_PIC_STRUCT_FRAME_DOUBLING:
+        case H264_SEI_PIC_STRUCT_FRAME_DOUBLING:
             cur->f->repeat_pict = 2;
             break;
-        case SEI_PIC_STRUCT_FRAME_TRIPLING:
+        case H264_SEI_PIC_STRUCT_FRAME_TRIPLING:
             cur->f->repeat_pict = 4;
             break;
         }
 
         if ((pt->ct_type & 3) &&
-            pt->pic_struct <= SEI_PIC_STRUCT_BOTTOM_TOP)
+            pt->pic_struct <= H264_SEI_PIC_STRUCT_BOTTOM_TOP)
             cur->f->interlaced_frame = (pt->ct_type & (1 << 1)) != 0;
     } else {
         /* Derive interlacing flag from used decoding process. */
@@ -1042,11 +1058,12 @@ static int h264_export_frame_props(H264Context *h)
         /* Derive top_field_first from field pocs. */
         cur->f->top_field_first = cur->field_poc[0] < cur->field_poc[1];
     } else {
-        if (cur->f->interlaced_frame || sps->pic_struct_present_flag) {
+        if (cur->f->interlaced_frame ||
+            (sps->pic_struct_present_flag && h->sei.picture_timing.present)) {
             /* Use picture timing SEI information. Even if it is a
              * information of a past frame, better than nothing. */
-            if (h->sei.picture_timing.pic_struct == SEI_PIC_STRUCT_TOP_BOTTOM ||
-                h->sei.picture_timing.pic_struct == SEI_PIC_STRUCT_TOP_BOTTOM_TOP)
+            if (h->sei.picture_timing.pic_struct == H264_SEI_PIC_STRUCT_TOP_BOTTOM ||
+                h->sei.picture_timing.pic_struct == H264_SEI_PIC_STRUCT_TOP_BOTTOM_TOP)
                 cur->f->top_field_first = 1;
             else
                 cur->f->top_field_first = 0;
@@ -1095,6 +1112,13 @@ static int h264_export_frame_props(H264Context *h)
 
         if (fp->content_interpretation_type == 2)
             stereo->flags = AV_STEREO3D_FLAG_INVERT;
+
+        if (fp->arrangement_type == 5) {
+            if (fp->current_frame_is_frame0_flag)
+                stereo->view = AV_STEREO3D_VIEW_LEFT;
+            else
+                stereo->view = AV_STEREO3D_VIEW_RIGHT;
+        }
     }
 
     if (h->sei.display_orientation.present &&
@@ -1135,6 +1159,12 @@ static int h264_export_frame_props(H264Context *h)
         memcpy(sd->data, a53->a53_caption, a53->a53_caption_size);
         av_freep(&a53->a53_caption);
         a53->a53_caption_size = 0;
+    }
+
+    if (h->sei.alternative_transfer.present &&
+        av_color_transfer_name(h->sei.alternative_transfer.preferred_transfer_characteristics) &&
+        h->sei.alternative_transfer.preferred_transfer_characteristics != AVCOL_TRC_UNSPECIFIED) {
+        h->avctx->color_trc = cur->f->color_trc = h->sei.alternative_transfer.preferred_transfer_characteristics;
     }
 
     return 0;
@@ -1404,6 +1434,9 @@ static int h264_field_start(H264Context *h, const H264SliceContext *sl,
                 h->short_ref[0]->f->width == prev->f->width &&
                 h->short_ref[0]->f->height == prev->f->height &&
                 h->short_ref[0]->f->format == prev->f->format) {
+                ff_thread_await_progress(&prev->tf, INT_MAX, 0);
+                if (prev->field_picture)
+                    ff_thread_await_progress(&prev->tf, INT_MAX, 1);
                 av_image_copy(h->short_ref[0]->f->data,
                               h->short_ref[0]->f->linesize,
                               (const uint8_t **)prev->f->data,
@@ -1881,9 +1914,8 @@ int ff_h264_queue_decode_slice(H264Context *h, const H2645NAL *nal)
                 sl = h->slice_ctx;
             }
 
-            if (h->current_slice && h->cur_pic_ptr && FIELD_PICTURE(h)) {
+            if (h->field_started)
                 ff_h264_field_end(h, sl, 1);
-            }
 
             h->current_slice = 0;
             if (!h->first_field) {
@@ -1899,6 +1931,7 @@ int ff_h264_queue_decode_slice(H264Context *h, const H2645NAL *nal)
             ret = h264_field_start(h, sl, nal);
             if (ret < 0)
                 return ret;
+            h->field_started = 1;
         }
     }
 

@@ -184,7 +184,10 @@ static const AVOption options[] = {
 };
 
 static const AVClass class = {
-    "libopencore_amrnb", av_default_item_name, options, LIBAVUTIL_VERSION_INT
+    .class_name = "libopencore_amrnb",
+    .item_name  = av_default_item_name,
+    .option     = options,
+    .version    = LIBAVUTIL_VERSION_INT,
 };
 
 static av_cold int amr_nb_encode_init(AVCodecContext *avctx)
@@ -376,6 +379,7 @@ AVCodec ff_libopencore_amrwb_decoder = {
     .close          = amr_wb_decode_close,
     .decode         = amr_wb_decode_frame,
     .capabilities   = AV_CODEC_CAP_DR1,
+    .wrapper_name   = "libopencore_amrwb",
 };
 
 #endif /* CONFIG_LIBOPENCORE_AMRWB_DECODER */

@@ -19,6 +19,7 @@
 #include <va/va.h>
 #include <va/va_dec_vp8.h>
 
+#include "hwaccel.h"
 #include "vaapi_decode.h"
 #include "vp8.h"
 
@@ -219,7 +220,7 @@ fail:
     return err;
 }
 
-AVHWAccel ff_vp8_vaapi_hwaccel = {
+const AVHWAccel ff_vp8_vaapi_hwaccel = {
     .name                 = "vp8_vaapi",
     .type                 = AVMEDIA_TYPE_VIDEO,
     .id                   = AV_CODEC_ID_VP8,
@@ -231,4 +232,6 @@ AVHWAccel ff_vp8_vaapi_hwaccel = {
     .init                 = &ff_vaapi_decode_init,
     .uninit               = &ff_vaapi_decode_uninit,
     .priv_data_size       = sizeof(VAAPIDecodeContext),
+    .frame_params         = &ff_vaapi_common_frame_params,
+    .caps_internal        = HWACCEL_CAP_ASYNC_SAFE,
 };

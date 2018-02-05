@@ -209,9 +209,9 @@ static const char *drawtext_get_name(void *ctx)
 }
 
 static const AVClass drawtext_class = {
-    "DrawTextContext",
-    drawtext_get_name,
-    drawtext_options
+    .class_name = "DrawTextContext",
+    .item_name  = drawtext_get_name,
+    .option     = drawtext_options,
 };
 
 #undef __FTERRORS_H__
@@ -219,11 +219,10 @@ static const AVClass drawtext_class = {
 #define FT_ERRORDEF(e, v, s) { (e), (s) },
 #define FT_ERROR_END_LIST { 0, NULL } };
 
-struct ft_error
-{
+static const struct ft_error {
     int err;
     const char *err_msg;
-} static ft_errors[] =
+} ft_errors[] =
 #include FT_ERRORS_H
 
 #define FT_ERRMSG(e) ft_errors[e].err_msg
@@ -841,7 +840,7 @@ static int draw_glyphs(DrawTextContext *s, AVFrame *frame,
             continue;
 
         dummy.code = code;
-        glyph = av_tree_find(s->glyphs, &dummy, (void *)glyph_cmp, NULL);
+        glyph = av_tree_find(s->glyphs, &dummy, glyph_cmp, NULL);
 
         if (glyph->bitmap.pixel_mode != FT_PIXEL_MODE_MONO &&
             glyph->bitmap.pixel_mode != FT_PIXEL_MODE_GRAY)

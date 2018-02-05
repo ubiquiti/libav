@@ -27,7 +27,7 @@
 
 #include "avcodec.h"
 #include "get_bits.h"
-#include "golomb.h"
+#include "golomb_legacy.h"
 #include "h264_ps.h"
 #include "h264_sei.h"
 #include "internal.h"
@@ -44,6 +44,7 @@ void ff_h264_sei_uninit(H264SEIContext *h)
     h->picture_timing.dpb_output_delay  = 0;
     h->picture_timing.cpb_removal_delay = -1;
 
+    h->picture_timing.present      = 0;
     h->buffering_period.present    = 0;
     h->frame_packing.present       = 0;
     h->display_orientation.present = 0;
@@ -70,7 +71,7 @@ static int decode_picture_timing(H264SEIPictureTiming *h, GetBitContext *gb,
         h->pic_struct = get_bits(gb, 4);
         h->ct_type    = 0;
 
-        if (h->pic_struct > SEI_PIC_STRUCT_FRAME_TRIPLING)
+        if (h->pic_struct > H264_SEI_PIC_STRUCT_FRAME_TRIPLING)
             return AVERROR_INVALIDDATA;
 
         num_clock_ts = sei_num_clock_ts_table[h->pic_struct];
@@ -109,6 +110,8 @@ static int decode_picture_timing(H264SEIPictureTiming *h, GetBitContext *gb,
         av_log(logctx, AV_LOG_DEBUG, "ct_type:%X pic_struct:%d\n",
                h->ct_type, h->pic_struct);
     }
+
+    h->present = 1;
     return 0;
 }
 
@@ -311,10 +314,11 @@ static int decode_frame_packing_arrangement(H264SEIFramePacking *h,
         h->quincunx_subsampling           = get_bits1(gb);
         h->content_interpretation_type    = get_bits(gb, 6);
 
-        // the following skips: spatial_flipping_flag, frame0_flipped_flag,
-        // field_views_flag, current_frame_is_frame0_flag,
+        // spatial_flipping_flag, frame0_flipped_flag, field_views_flag
+        skip_bits(gb, 3);
+        h->current_frame_is_frame0_flag = get_bits1(gb);
         // frame0_self_contained_flag, frame1_self_contained_flag
-        skip_bits(gb, 6);
+        skip_bits(gb, 2);
 
         if (!h->quincunx_subsampling && h->arrangement_type != 5)
             skip_bits(gb, 16);      // frame[01]_grid_position_[xy]
@@ -340,6 +344,14 @@ static int decode_display_orientation(H264SEIDisplayOrientation *h,
         skip_bits1(gb);     // display_orientation_extension_flag
     }
 
+    return 0;
+}
+
+static int decode_alternative_transfer(H264SEIAlternativeTransfer *h,
+                                       GetBitContext *gb)
+{
+    h->present = 1;
+    h->preferred_transfer_characteristics = get_bits(gb, 8);
     return 0;
 }
 
@@ -372,26 +384,29 @@ int ff_h264_sei_decode(H264SEIContext *h, GetBitContext *gb,
         }
 
         switch (type) {
-        case SEI_TYPE_PIC_TIMING: // Picture timing SEI
+        case H264_SEI_TYPE_PIC_TIMING: // Picture timing SEI
             ret = decode_picture_timing(&h->picture_timing, gb, ps->sps, logctx);
             break;
-        case SEI_TYPE_USER_DATA_REGISTERED:
+        case H264_SEI_TYPE_USER_DATA_REGISTERED:
             ret = decode_registered_user_data(h, gb, logctx, size);
             break;
-        case SEI_TYPE_USER_DATA_UNREGISTERED:
+        case H264_SEI_TYPE_USER_DATA_UNREGISTERED:
             ret = decode_unregistered_user_data(&h->unregistered, gb, logctx, size);
             break;
-        case SEI_TYPE_RECOVERY_POINT:
+        case H264_SEI_TYPE_RECOVERY_POINT:
             ret = decode_recovery_point(&h->recovery_point, gb);
             break;
-        case SEI_TYPE_BUFFERING_PERIOD:
+        case H264_SEI_TYPE_BUFFERING_PERIOD:
             ret = decode_buffering_period(&h->buffering_period, gb, ps, logctx);
             break;
-        case SEI_TYPE_FRAME_PACKING:
+        case H264_SEI_TYPE_FRAME_PACKING:
             ret = decode_frame_packing_arrangement(&h->frame_packing, gb);
             break;
-        case SEI_TYPE_DISPLAY_ORIENTATION:
+        case H264_SEI_TYPE_DISPLAY_ORIENTATION:
             ret = decode_display_orientation(&h->display_orientation, gb);
+            break;
+        case H264_SEI_TYPE_ALTERNATIVE_TRANSFER:
+            ret = decode_alternative_transfer(&h->alternative_transfer, gb);
             break;
         default:
             av_log(logctx, AV_LOG_DEBUG, "unknown SEI type %d\n", type);

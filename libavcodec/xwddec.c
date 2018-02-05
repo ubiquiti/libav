@@ -147,7 +147,7 @@ static int xwd_decode_frame(AVCodecContext *avctx, void *data,
     }
 
     if (pixformat != XWD_Z_PIXMAP) {
-        av_log(avctx, AV_LOG_ERROR, "pixmap format %"PRIu32" unsupported\n", pixformat);
+        avpriv_report_missing_feature(avctx, "Pixmap format %"PRIu32, pixformat);
         return AVERROR_PATCHWELCOME;
     }
 
@@ -155,10 +155,12 @@ static int xwd_decode_frame(AVCodecContext *avctx, void *data,
     switch (vclass) {
     case XWD_STATIC_GRAY:
     case XWD_GRAY_SCALE:
-        if (bpp != 1)
+        if (bpp != 1 && bpp != 8 || bpp != pixdepth)
             return AVERROR_INVALIDDATA;
         if (pixdepth == 1)
             avctx->pix_fmt = AV_PIX_FMT_MONOWHITE;
+        else if (pixdepth == 8)
+            avctx->pix_fmt = AV_PIX_FMT_GRAY8;
         break;
     case XWD_STATIC_COLOR:
     case XWD_PSEUDO_COLOR:

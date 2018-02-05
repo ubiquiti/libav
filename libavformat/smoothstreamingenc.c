@@ -187,8 +187,8 @@ static void ism_free(AVFormatContext *s)
         os->out = os->out2 = os->tail_out = NULL;
         if (os->ctx && os->ctx_inited)
             av_write_trailer(os->ctx);
-        if (os->ctx && os->ctx->pb)
-            av_free(os->ctx->pb);
+        if (os->ctx)
+            avio_context_free(&os->ctx->pb);
         if (os->ctx)
             avformat_free_context(os->ctx);
         av_free(os->private_str);
@@ -662,6 +662,5 @@ AVOutputFormat ff_smoothstreaming_muxer = {
     .write_header   = ism_write_header,
     .write_packet   = ism_write_packet,
     .write_trailer  = ism_write_trailer,
-    .codec_tag      = (const AVCodecTag* const []){ ff_mp4_obj_type, 0 },
     .priv_class     = &ism_class,
 };

@@ -528,15 +528,11 @@ static int qsvscale_filter_frame(AVFilterLink *link, AVFrame *in)
     AVFrame *out = NULL;
     int ret = 0;
 
-    out = av_frame_alloc();
+    out = ff_get_video_buffer(outlink, outlink->w, outlink->h);
     if (!out) {
         ret = AVERROR(ENOMEM);
         goto fail;
     }
-
-    ret = av_hwframe_get_buffer(s->out_frames_ref, out, 0);
-    if (ret < 0)
-        goto fail;
 
     do {
         err = MFXVideoVPP_RunFrameVPPAsync(s->session,
@@ -630,4 +626,6 @@ AVFilter ff_vf_scale_qsv = {
 
     .inputs    = qsvscale_inputs,
     .outputs   = qsvscale_outputs,
+
+    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
 };

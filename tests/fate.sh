@@ -47,6 +47,7 @@ configure()(
         --prefix="${inst}"                                              \
         --samples="${samples}"                                          \
         --enable-gpl                                                    \
+        ${ignore_tests:+--ignore-tests="$ignore_tests"}                 \
         ${arch:+--arch=$arch}                                           \
         ${cpu:+--cpu="$cpu"}                                            \
         ${toolchain:+--toolchain="$toolchain"}                          \
@@ -73,7 +74,7 @@ compile()(
 fate()(
     test "$build_only" = "yes" && return
     cd ${build} || return
-    ${make} ${makeopts} -k fate
+    ${make} ${makeopts_fate-${makeopts}} -k fate
 )
 
 clean(){
@@ -83,7 +84,7 @@ clean(){
 report(){
     date=$(date -u +%Y%m%d%H%M%S)
     echo "fate:1:${date}:${slot}:${version}:$1:$2:${branch}:${comment}" >report
-    cat ${build}/config.fate ${build}/tests/data/fate/*.rep >>report 2>/dev/null
+    cat ${build}/avbuild/config.fate ${build}/tests/data/fate/*.rep >> report 2> /dev/null
     test -n "$fate_recv" && $tar report *.log | gzip | $fate_recv
 }
 
@@ -105,7 +106,7 @@ test -d "$src" && update || checkout || die "Error fetching source"
 
 cd ${workdir}
 
-version=$(${src}/version.sh ${src})
+version=$(${src}/avbuild/version.sh ${src})
 test "$version" = "$(cat version-$slot 2>/dev/null)" && exit 0
 echo ${version} >version-$slot
 

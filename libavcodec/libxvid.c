@@ -26,6 +26,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <xvid.h>
@@ -39,7 +40,6 @@
 
 #include "avcodec.h"
 #include "internal.h"
-#include "libxvid.h"
 #include "mpegutils.h"
 
 /**
@@ -359,6 +359,33 @@ static void xvid_correct_framerate(AVCodecContext *avctx)
     }
 }
 
+/* Create temporary file using mkstemp(), tries /tmp first, if possible.
+ * *prefix can be a character constant; *filename will be allocated internally.
+ * Return file descriptor of opened file (or error code on error)
+ * and opened file name in **filename. */
+static int xvid_tempfile(AVCodecContext *avctx, const char *prefix,
+                         char **filename)
+{
+    int fd = -1;
+    size_t len = strlen(prefix) + 12; /* room for "/tmp/" and "XXXXXX\0" */
+    *filename  = av_malloc(len);
+    if (!(*filename)) {
+        av_log(avctx, AV_LOG_ERROR, "xvid_tempfile: Cannot allocate file name\n");
+        return AVERROR(ENOMEM);
+    }
+    snprintf(*filename, len, "/tmp/%sXXXXXX", prefix);
+    fd = mkstemp(*filename);
+    if (fd < 0) {
+        snprintf(*filename, len, "./%sXXXXXX", prefix);
+        fd = mkstemp(*filename);
+    }
+    if (fd < 0) {
+        av_log(avctx, AV_LOG_ERROR, "xvid_tempfile: Cannot open temporary file %s\n", *filename);
+        return AVERROR(EIO);
+    }
+    return fd; /* success */
+}
+
 static av_cold int xvid_encode_init(AVCodecContext *avctx)
 {
     int xerr, i;
@@ -405,30 +432,6 @@ static av_cold int xvid_encode_init(AVCodecContext *avctx)
     case 1:
         x->me_flags |= XVID_ME_ADVANCEDDIAMOND16 |
                        XVID_ME_HALFPELREFINE16;
-#if FF_API_MOTION_EST
-FF_DISABLE_DEPRECATION_WARNINGS
-        break;
-    default:
-        switch (avctx->me_method) {
-        case ME_FULL:   /* Quality 6 */
-             x->me_flags |= XVID_ME_EXTSEARCH16 |
-                            XVID_ME_EXTSEARCH8;
-        case ME_EPZS:   /* Quality 4 */
-             x->me_flags |= XVID_ME_ADVANCEDDIAMOND8 |
-                            XVID_ME_HALFPELREFINE8   |
-                            XVID_ME_CHROMA_PVOP      |
-                            XVID_ME_CHROMA_BVOP;
-        case ME_LOG:    /* Quality 2 */
-        case ME_PHODS:
-        case ME_X1:
-             x->me_flags |= XVID_ME_ADVANCEDDIAMOND16 |
-                            XVID_ME_HALFPELREFINE16;
-        case ME_ZERO:   /* Quality 0 */
-        default:
-            break;
-        }
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
     }
 
     /* Decide how we should decide blocks */
@@ -447,12 +450,6 @@ FF_ENABLE_DEPRECATION_WARNINGS
     default:
         break;
     }
-
-    /* Bring in VOL flags from avconv command-line */
-#if FF_API_GMC
-    if (avctx->flags & CODEC_FLAG_GMC)
-        x->gmc = 1;
-#endif
 
     x->vol_flags = 0;
     if (x->gmc) {
@@ -519,7 +516,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
         rc2pass2.version = XVID_VERSION;
         rc2pass2.bitrate = avctx->bit_rate;
 
-        fd = ff_tempfile("xvidff.", &x->twopassfile);
+        fd = xvid_tempfile(avctx, "xvidff.", &x->twopassfile);
         if (fd < 0) {
             av_log(avctx, AV_LOG_ERROR, "Xvid: Cannot write 2-pass pipe\n");
             return fd;
@@ -928,4 +925,5 @@ AVCodec ff_libxvid_encoder = {
     .priv_class     = &xvid_class,
     .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE |
                       FF_CODEC_CAP_INIT_CLEANUP,
+    .wrapper_name   = "libxvid",
 };

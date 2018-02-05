@@ -35,7 +35,11 @@
 #include "libavutil/avstring.h"
 #include "libavutil/opt.h"
 #include "libavutil/imgutils.h"
+
+#include "libavcodec/avcodec.h"
+
 #include "libavformat/avformat.h"
+
 #include "avfilter.h"
 #include "formats.h"
 #include "internal.h"
@@ -77,9 +81,9 @@ static const char *movie_get_name(void *ctx)
 }
 
 static const AVClass movie_class = {
-    "MovieContext",
-    movie_get_name,
-    movie_options
+    .class_name = "MovieContext",
+    .item_name  = movie_get_name,
+    .option     = movie_options,
 };
 
 static av_cold int movie_init(AVFilterContext *ctx)

@@ -56,7 +56,6 @@ typedef struct NVENCFrame {
 
     NV_ENC_OUTPUT_PTR out;
     NV_ENC_BUFFER_FORMAT format;
-    int locked;
 } NVENCFrame;
 
 typedef CUresult(CUDAAPI *PCUINIT)(unsigned int Flags);
@@ -66,6 +65,7 @@ typedef CUresult(CUDAAPI *PCUDEVICEGETNAME)(char *name, int len, CUdevice dev);
 typedef CUresult(CUDAAPI *PCUDEVICECOMPUTECAPABILITY)(int *major, int *minor, CUdevice dev);
 typedef CUresult(CUDAAPI *PCUCTXCREATE)(CUcontext *pctx, unsigned int flags, CUdevice dev);
 typedef CUresult(CUDAAPI *PCUCTXPOPCURRENT)(CUcontext *pctx);
+typedef CUresult(CUDAAPI *PCUCTXPUSHCURRENT)(CUcontext ctx);
 typedef CUresult(CUDAAPI *PCUCTXDESTROY)(CUcontext ctx);
 
 typedef NVENCSTATUS (NVENCAPI *PNVENCODEAPICREATEINSTANCE)(NV_ENCODE_API_FUNCTION_LIST *functionList);
@@ -84,6 +84,7 @@ typedef struct NVENCLibraryContext
     PCUDEVICECOMPUTECAPABILITY cu_device_compute_capability;
     PCUCTXCREATE cu_ctx_create;
     PCUCTXPOPCURRENT cu_ctx_pop_current;
+    PCUCTXPUSHCURRENT cu_ctx_push_current;
     PCUCTXDESTROY cu_ctx_destroy;
 
     NV_ENCODE_API_FUNCTION_LIST nvenc_funcs;
@@ -143,7 +144,7 @@ typedef struct NVENCContext {
     int nb_surfaces;
     NVENCFrame *frames;
     AVFifoBuffer *timestamps;
-    AVFifoBuffer *pending, *ready;
+    AVFifoBuffer *pending, *ready, *unused_surface_queue;
 
     struct {
         CUdeviceptr ptr;
@@ -181,6 +182,9 @@ typedef struct NVENCContext {
     int strict_gop;
     int aq_strength;
     int quality;
+    int init_qp_p;
+    int init_qp_b;
+    int init_qp_i;
 } NVENCContext;
 
 int ff_nvenc_encode_init(AVCodecContext *avctx);

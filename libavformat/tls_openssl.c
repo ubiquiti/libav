@@ -109,6 +109,12 @@ void ff_openssl_deinit(void)
 
 static int print_tls_error(URLContext *h, int ret)
 {
+    TLSContext *c = h->priv_data;
+    if (h->flags & AVIO_FLAG_NONBLOCK) {
+        int err = SSL_get_error(c->ssl, ret);
+        if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_READ)
+            return AVERROR(EAGAIN);
+    }
     av_log(h, AV_LOG_ERROR, "%s\n", ERR_error_string(ERR_get_error(), NULL));
     return AVERROR(EIO);
 }
@@ -164,6 +170,8 @@ static int url_bio_bread(BIO *b, char *buf, int len)
     if (ret >= 0)
         return ret;
     BIO_clear_retry_flags(b);
+    if (ret == AVERROR(EAGAIN))
+        BIO_set_retry_read(b);
     if (ret == AVERROR_EXIT)
         return 0;
     return -1;
@@ -176,6 +184,8 @@ static int url_bio_bwrite(BIO *b, const char *buf, int len)
     if (ret >= 0)
         return ret;
     BIO_clear_retry_flags(b);
+    if (ret == AVERROR(EAGAIN))
+        BIO_set_retry_write(b);
     if (ret == AVERROR_EXIT)
         return 0;
     return -1;
@@ -221,12 +231,17 @@ static int tls_open(URLContext *h, const char *uri, int flags, AVDictionary **op
     if ((ret = ff_tls_open_underlying(c, h, uri, options)) < 0)
         goto fail;
 
-    p->ctx = SSL_CTX_new(c->listen ? TLSv1_server_method() : TLSv1_client_method());
+    // We want to support all versions of TLS >= 1.0, but not the deprecated
+    // and insecure SSLv2 and SSLv3.  Despite the name, SSLv23_*_method()
+    // enables support for all versions of SSL and TLS, and we then disable
+    // support for the old protocols immediately after creating the context.
+    p->ctx = SSL_CTX_new(c->listen ? SSLv23_server_method() : SSLv23_client_method());
     if (!p->ctx) {
         av_log(h, AV_LOG_ERROR, "%s\n", ERR_error_string(ERR_get_error(), NULL));
         ret = AVERROR(EIO);
         goto fail;
     }
+    SSL_CTX_set_options(p->ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3);
     if (c->ca_file)
         SSL_CTX_load_verify_locations(p->ctx, c->ca_file, NULL);
     if (c->cert_file && !SSL_CTX_use_certificate_chain_file(p->ctx, c->cert_file)) {
@@ -287,7 +302,11 @@ fail:
 static int tls_read(URLContext *h, uint8_t *buf, int size)
 {
     TLSContext *c = h->priv_data;
-    int ret = SSL_read(c->ssl, buf, size);
+    int ret;
+    // Set or clear the AVIO_FLAG_NONBLOCK on c->tls_shared.tcp
+    c->tls_shared.tcp->flags &= ~AVIO_FLAG_NONBLOCK;
+    c->tls_shared.tcp->flags |= h->flags & AVIO_FLAG_NONBLOCK;
+    ret = SSL_read(c->ssl, buf, size);
     if (ret > 0)
         return ret;
     if (ret == 0)
@@ -298,7 +317,11 @@ static int tls_read(URLContext *h, uint8_t *buf, int size)
 static int tls_write(URLContext *h, const uint8_t *buf, int size)
 {
     TLSContext *c = h->priv_data;
-    int ret = SSL_write(c->ssl, buf, size);
+    int ret;
+    // Set or clear the AVIO_FLAG_NONBLOCK on c->tls_shared.tcp
+    c->tls_shared.tcp->flags &= ~AVIO_FLAG_NONBLOCK;
+    c->tls_shared.tcp->flags |= h->flags & AVIO_FLAG_NONBLOCK;
+    ret = SSL_write(c->ssl, buf, size);
     if (ret > 0)
         return ret;
     if (ret == 0)
@@ -318,7 +341,7 @@ static const AVClass tls_class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-const URLProtocol ff_tls_openssl_protocol = {
+const URLProtocol ff_tls_protocol = {
     .name           = "tls",
     .url_open2      = tls_open,
     .url_read       = tls_read,

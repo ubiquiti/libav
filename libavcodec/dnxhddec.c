@@ -122,7 +122,7 @@ static int dnxhd_decode_header(DNXHDContext *ctx, AVFrame *frame,
 
     if (memcmp(buf, header_prefix, 5) && memcmp(buf, header_prefix444, 5)) {
         av_log(ctx->avctx, AV_LOG_ERROR,
-               "unknown header 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X\n",
+               "unknown header 0x%02"PRIX8" 0x%02"PRIX8" 0x%02"PRIX8" 0x%02"PRIX8" 0x%02"PRIX8"\n",
                buf[0], buf[1], buf[2], buf[3], buf[4]);
         return AVERROR_INVALIDDATA;
     }
@@ -131,14 +131,14 @@ static int dnxhd_decode_header(DNXHDContext *ctx, AVFrame *frame,
         frame->interlaced_frame = 1;
         frame->top_field_first  = first_field ^ ctx->cur_field;
         av_log(ctx->avctx, AV_LOG_DEBUG,
-               "interlaced %d, cur field %d\n", buf[5] & 3, ctx->cur_field);
+               "interlaced %"PRId8", cur field %d\n", buf[5] & 3, ctx->cur_field);
     }
     ctx->mbaff = buf[0x6] & 32;
 
     ctx->height = AV_RB16(buf + 0x18);
     ctx->width  = AV_RB16(buf + 0x1a);
 
-    ff_dlog(ctx->avctx, "width %d, height %d\n", ctx->width, ctx->height);
+    ff_dlog(ctx->avctx, "width %u, height %u\n", ctx->width, ctx->height);
 
     if (buf[0x21] == 0x58) { /* 10 bit */
         ctx->bit_depth = ctx->avctx->bits_per_raw_sample = 10;
@@ -157,12 +157,12 @@ static int dnxhd_decode_header(DNXHDContext *ctx, AVFrame *frame,
         ctx->avctx->pix_fmt = AV_PIX_FMT_YUV422P;
         ctx->decode_dct_block = dnxhd_decode_dct_block_8;
     } else {
-        av_log(ctx->avctx, AV_LOG_ERROR, "invalid bit depth value (%d).\n",
+        av_log(ctx->avctx, AV_LOG_ERROR, "invalid bit depth value (%"PRId8").\n",
                buf[0x21]);
         return AVERROR_INVALIDDATA;
     }
     if (ctx->bit_depth != old_bit_depth) {
-        ff_blockdsp_init(&ctx->bdsp, ctx->avctx);
+        ff_blockdsp_init(&ctx->bdsp);
         ff_idctdsp_init(&ctx->idsp, ctx->avctx);
     }
 
@@ -185,7 +185,7 @@ static int dnxhd_decode_header(DNXHDContext *ctx, AVFrame *frame,
     }
 
     if (buf_size < ctx->cid_table->coding_unit_size) {
-        av_log(ctx->avctx, AV_LOG_ERROR, "incorrect frame size (%d < %d).\n",
+        av_log(ctx->avctx, AV_LOG_ERROR, "incorrect frame size (%d < %u).\n",
                buf_size, ctx->cid_table->coding_unit_size);
         return AVERROR_INVALIDDATA;
     }
@@ -194,7 +194,7 @@ static int dnxhd_decode_header(DNXHDContext *ctx, AVFrame *frame,
     ctx->mb_height = buf[0x16d];
 
     ff_dlog(ctx->avctx,
-            "mb width %d, mb height %d\n", ctx->mb_width, ctx->mb_height);
+            "mb width %u, mb height %u\n", ctx->mb_width, ctx->mb_height);
 
     if ((ctx->height + 15) >> 4 == ctx->mb_height && frame->interlaced_frame)
         ctx->height <<= 1;
@@ -202,16 +202,16 @@ static int dnxhd_decode_header(DNXHDContext *ctx, AVFrame *frame,
     if (ctx->mb_height > 68 ||
         (ctx->mb_height << frame->interlaced_frame) > (ctx->height + 15) >> 4) {
         av_log(ctx->avctx, AV_LOG_ERROR,
-               "mb height too big: %d\n", ctx->mb_height);
+               "mb height too big: %u\n", ctx->mb_height);
         return AVERROR_INVALIDDATA;
     }
 
     for (i = 0; i < ctx->mb_height; i++) {
         ctx->mb_scan_index[i] = AV_RB32(buf + 0x170 + (i << 2));
-        ff_dlog(ctx->avctx, "mb scan index %d\n", ctx->mb_scan_index[i]);
+        ff_dlog(ctx->avctx, "mb scan index %"PRIu32"\n", ctx->mb_scan_index[i]);
         if (buf_size < ctx->mb_scan_index[i] + 0x280) {
             av_log(ctx->avctx, AV_LOG_ERROR,
-                   "invalid mb scan index (%d < %d).\n",
+                   "invalid mb scan index (%d < %"PRIu32").\n",
                    buf_size, ctx->mb_scan_index[i] + 0x280);
             return AVERROR_INVALIDDATA;
         }
@@ -442,7 +442,7 @@ decode_coding_unit:
 
     if ((avctx->width || avctx->height) &&
         (ctx->width != avctx->width || ctx->height != avctx->height)) {
-        av_log(avctx, AV_LOG_WARNING, "frame size changed: %dx%d -> %dx%d\n",
+        av_log(avctx, AV_LOG_WARNING, "frame size changed: %dx%d -> %ux%u\n",
                avctx->width, avctx->height, ctx->width, ctx->height);
         first_field = 1;
     }

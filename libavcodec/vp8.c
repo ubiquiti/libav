@@ -27,6 +27,7 @@
 #include "libavutil/imgutils.h"
 
 #include "avcodec.h"
+#include "hwaccel.h"
 #include "internal.h"
 #include "mathops.h"
 #include "rectangle.h"
@@ -1166,10 +1167,10 @@ void decode_mb_mode(VP8Context *s, VP8Macroblock *mb, int mb_x, int mb_y,
                     uint8_t *segment, uint8_t *ref, int layout, int is_vp7)
 {
     VP56RangeCoder *c = &s->c;
-    static const char *vp7_feature_name[] = { "q-index",
-                                              "lf-delta",
-                                              "partial-golden-update",
-                                              "blit-pitch" };
+    static const char * const vp7_feature_name[] = { "q-index",
+                                                     "lf-delta",
+                                                     "partial-golden-update",
+                                                     "blit-pitch" };
     if (is_vp7) {
         int i;
         *segment = 0;
@@ -2514,7 +2515,9 @@ int vp78_decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
     if (ret < 0)
         goto err;
 
-    if (!is_vp7 && s->pix_fmt == AV_PIX_FMT_NONE) {
+    if (s->actually_webp) {
+        // avctx->pix_fmt already set in caller.
+    } else if (!is_vp7 && s->pix_fmt == AV_PIX_FMT_NONE) {
         enum AVPixelFormat pix_fmts[] = {
 #if CONFIG_VP8_VAAPI_HWACCEL
             AV_PIX_FMT_VAAPI,
@@ -2851,6 +2854,12 @@ AVCodec ff_vp8_decoder = {
     .decode                = ff_vp8_decode_frame,
     .capabilities          = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_FRAME_THREADS |
                              AV_CODEC_CAP_SLICE_THREADS,
+    .hw_configs            = (const AVCodecHWConfigInternal*[]) {
+#if CONFIG_VP8_VAAPI_HWACCEL
+                               HWACCEL_VAAPI(vp8),
+#endif
+                               NULL
+                           },
     .flush                 = vp8_decode_flush,
     .init_thread_copy      = ONLY_IF_THREADS_ENABLED(vp8_decode_init_thread_copy),
     .update_thread_context = ONLY_IF_THREADS_ENABLED(vp8_decode_update_thread_context),

@@ -61,6 +61,18 @@ fate-cavs: CMD = framecrc -i $(TARGET_SAMPLES)/cavs/cavs.mpg -an
 FATE_SAMPLES_AVCONV-$(call DEMDEC, CDG, CDGRAPHICS) += fate-cdgraphics
 fate-cdgraphics: CMD = framecrc -i $(TARGET_SAMPLES)/cdgraphics/BrotherJohn.cdg -pix_fmt rgb24 -t 1
 
+FATE_CFHD-$(CONFIG_AVI_DEMUXER) += fate-cfhd-1
+fate-cfhd-1: CMD = framecrc -i $(TARGET_SAMPLES)/cfhd/cfhd_422.avi -pix_fmt yuv422p10le
+
+FATE_CFHD-$(CONFIG_AVI_DEMUXER) += fate-cfhd-2
+fate-cfhd-2: CMD = framecrc -i $(TARGET_SAMPLES)/cfhd/cfhd_444.avi -pix_fmt yuv422p10le
+
+FATE_CFHD-$(CONFIG_MOV_DEMUXER) += fate-cfhd-3
+fate-cfhd-3: CMD = framecrc -i $(TARGET_SAMPLES)/cfhd/cfhd_odd.mov -pix_fmt yuv422p10le
+
+FATE_SAMPLES_AVCONV-$(CONFIG_CFHD_DECODER) += $(FATE_CFHD-yes)
+fate-cfhd: $(FATE_CFHD-yes)
+
 FATE_SAMPLES_AVCONV-$(call DEMDEC, AVI, CLJR) += fate-cljr
 fate-cljr: CMD = framecrc -i $(TARGET_SAMPLES)/cljr/testcljr-partial.avi
 
@@ -140,7 +152,7 @@ FATE_SAMPLES_AVCONV-$(call DEMDEC, IDCIN, IDCIN) += fate-id-cin-video
 fate-id-cin-video: CMD = framecrc -i $(TARGET_SAMPLES)/idcin/idlog-2MB.cin -pix_fmt rgb24
 
 FATE_SAMPLES_AVCONV-$(call ENCDEC, ROQ PGMYUV, ROQ IMAGE2) += fate-idroq-video-encode
-fate-idroq-video-encode: CMD = md5 -f image2 -vcodec pgmyuv -i $(TARGET_SAMPLES)/ffmpeg-synthetic/vsynth1/%02d.pgm -sws_flags +bitexact -vf pad=512:512:80:112 -f roq -t 0.2
+fate-idroq-video-encode: CMD = md5 -f image2 -c:v pgmyuv -i $(TARGET_SAMPLES)/ffmpeg-synthetic/vsynth1/%02d.pgm -sws_flags +bitexact -vf pad=512:512:80:112 -f roq -t 0.2
 
 FATE_HAP += fate-hap1
 fate-hap1: CMD = framecrc -i $(TARGET_SAMPLES)/hap/hap1.mov
@@ -246,6 +258,9 @@ fate-nuv: $(FATE_NUV)
 FATE_SAMPLES_AVCONV-$(call DEMDEC, PAF, PAF_VIDEO) += fate-paf-video
 fate-paf-video: CMD = framecrc -i $(TARGET_SAMPLES)/paf/hod1-partial.paf -pix_fmt rgb24 -an
 
+FATE_SAMPLES_AVCONV-$(call DEMDEC, MOV, PIXLET) += fate-pixlet
+fate-pixlet: CMD = framecrc -i $(TARGET_SAMPLES)/pxlt/pixlet.mov -an -pix_fmt yuv420p16le
+
 FATE_SAMPLES_AVCONV-$(call DEMDEC, AVI, QPEG) += fate-qpeg
 fate-qpeg: CMD = framecrc -i $(TARGET_SAMPLES)/qpeg/Clock.avi -an -pix_fmt rgb24
 
@@ -308,7 +323,7 @@ fate-v410dec: CMD = framecrc -i $(TARGET_SAMPLES)/v410/lenav410.mov -pix_fmt yuv
 
 FATE_SAMPLES_AVCONV-$(call ENCDEC, V410 PGMYUV, AVI IMAGE2) += fate-v410enc
 fate-v410enc: $(VREF)
-fate-v410enc: CMD = md5 -f image2 -vcodec pgmyuv -i $(TARGET_PATH)/tests/vsynth1/%02d.pgm -fflags +bitexact -vcodec v410 -f avi
+fate-v410enc: CMD = md5 -f image2 -c:v pgmyuv -i $(TARGET_PATH)/tests/vsynth1/%02d.pgm -fflags +bitexact -c:v v410 -f avi
 
 FATE_SAMPLES_AVCONV-$(call DEMDEC, SIFF, VB) += fate-vb
 fate-vb: CMD = framecrc -i $(TARGET_SAMPLES)/SIFF/INTRO_B.VB -t 3 -pix_fmt rgb24 -an

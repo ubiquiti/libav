@@ -72,7 +72,12 @@ static const AVCodecDefault defaults[] = {
     { NULL },
 };
 
-static const AVClass class = { "libvorbis", av_default_item_name, options, LIBAVUTIL_VERSION_INT };
+static const AVClass class = {
+    .class_name = "libvorbis",
+    .item_name  = av_default_item_name,
+    .option     = options,
+    .version    = LIBAVUTIL_VERSION_INT,
+};
 
 
 static int vorbis_error_to_averror(int ov_err)
@@ -351,4 +356,5 @@ AVCodec ff_libvorbis_encoder = {
                                                       AV_SAMPLE_FMT_NONE },
     .priv_class     = &class,
     .defaults       = defaults,
+    .wrapper_name   = "libvorbis",
 };

@@ -17,13 +17,15 @@
 *.so.*
 *.swp
 *.ver
+*.version
 /.config
 /.version
 /avconv
 /avplay
 /avprobe
 /avversion.h
-/config.*
+/config.asm
+/config.h
 /coverage.info
 /lcov/
 /mapfile

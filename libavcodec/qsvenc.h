@@ -42,10 +42,24 @@
 #define QSV_HAVE_BREF_TYPE      QSV_VERSION_ATLEAST(1, 8)
 
 #define QSV_HAVE_LA     QSV_VERSION_ATLEAST(1, 7)
+#define QSV_HAVE_LA_DS  QSV_VERSION_ATLEAST(1, 8)
 #define QSV_HAVE_LA_HRD QSV_VERSION_ATLEAST(1, 11)
+
+#if defined(_WIN32)
 #define QSV_HAVE_ICQ    QSV_VERSION_ATLEAST(1, 8)
 #define QSV_HAVE_VCM    QSV_VERSION_ATLEAST(1, 8)
 #define QSV_HAVE_QVBR   QSV_VERSION_ATLEAST(1, 11)
+#else
+#define QSV_HAVE_ICQ    0
+#define QSV_HAVE_VCM    0
+#define QSV_HAVE_QVBR   0
+#endif
+
+#if !QSV_HAVE_LA_DS
+#define MFX_LOOKAHEAD_DS_OFF 0
+#define MFX_LOOKAHEAD_DS_2x 0
+#define MFX_LOOKAHEAD_DS_4x 0
+#endif
 
 #define QSV_COMMON_OPTS \
 { "async_depth", "Maximum processing parallelism", OFFSET(qsv.async_depth), AV_OPT_TYPE_INT, { .i64 = ASYNC_DEPTH_DEFAULT }, 0, INT_MAX, VE },  \
@@ -55,7 +69,13 @@
 { "fast",   NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_TARGETUSAGE_BEST_SPEED  },   INT_MIN, INT_MAX, VE, "preset" },                             \
 { "medium", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_TARGETUSAGE_BALANCED  },     INT_MIN, INT_MAX, VE, "preset" },                             \
 { "slow",   NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_TARGETUSAGE_BEST_QUALITY  }, INT_MIN, INT_MAX, VE, "preset" },                             \
-{ "la_depth", "Number of frames to analyze before encoding.", OFFSET(qsv.la_depth), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, INT16_MAX, VE },        \
+{ "la_depth", "Number of frames to analyze before encoding.", OFFSET(qsv.la_depth), AV_OPT_TYPE_INT, { .i64 = 9 },   9, 100, VE, "la_depth" },  \
+{ "unset", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 9 }, INT_MIN, INT_MAX,                                                       VE, "la_depth" },  \
+{ "la_ds", "Downscaling factor for the frames saved for the lookahead analysis", OFFSET(qsv.la_ds), AV_OPT_TYPE_INT, { .i64 = -1 },   -1, MFX_LOOKAHEAD_DS_4x, VE, "la_ds" }, \
+{ "auto", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = -1 }, INT_MIN, INT_MAX,                                                           VE, "la_ds" }, \
+{ "off", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_LOOKAHEAD_DS_OFF }, INT_MIN, INT_MAX,                                          VE, "la_ds" }, \
+{ "2x", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_LOOKAHEAD_DS_2x }, INT_MIN, INT_MAX,                                            VE, "la_ds" }, \
+{ "4x", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_LOOKAHEAD_DS_4x }, INT_MIN, INT_MAX,                                            VE, "la_ds" }, \
 { "vcm",      "Use the video conferencing mode ratecontrol",  OFFSET(qsv.vcm),      AV_OPT_TYPE_INT, { .i64 = 0  },  0, 1,         VE },        \
 { "rdo",            "Enable rate distortion optimization",    OFFSET(qsv.rdo),            AV_OPT_TYPE_INT, { .i64 = -1 }, -1,          1, VE }, \
 { "max_frame_size", "Maximum encoded frame size in bytes",    OFFSET(qsv.max_frame_size), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, UINT16_MAX, VE }, \
@@ -65,8 +85,7 @@
 { "extbrc",         "Extended bitrate control",               OFFSET(qsv.extbrc),         AV_OPT_TYPE_INT, { .i64 = -1 }, -1,          1, VE }, \
 { "adaptive_i",     "Adaptive I-frame placement",             OFFSET(qsv.adaptive_i),     AV_OPT_TYPE_INT, { .i64 = -1 }, -1,          1, VE }, \
 { "adaptive_b",     "Adaptive B-frame placement",             OFFSET(qsv.adaptive_b),     AV_OPT_TYPE_INT, { .i64 = -1 }, -1,          1, VE }, \
-{ "b_strategy",     "Strategy to choose between I/P/B-frames", OFFSET(qsv.b_strategy),    AV_OPT_TYPE_INT, { .i64 = -1 }, -1,          1, VE }, \
-{ "cavlc",          "Enable CAVLC",                           OFFSET(qsv.cavlc),          AV_OPT_TYPE_INT, { .i64 = 0 },   0,          1, VE }, \
+{ "b_strategy",     "Strategy to choose between I/P/B-frames", OFFSET(qsv.b_strategy),    AV_OPT_TYPE_INT, { .i64 = -1 }, -1,          1, VE },
 
 typedef struct QSVEncContext {
     AVCodecContext *avctx;
@@ -78,6 +97,7 @@ typedef struct QSVEncContext {
 
     int packet_size;
     int width_align;
+    int height_align;
 
     mfxVideoParam param;
     mfxFrameAllocRequest req;
@@ -108,6 +128,7 @@ typedef struct QSVEncContext {
     int avbr_accuracy;
     int avbr_convergence;
     int la_depth;
+    int la_ds;
     int vcm;
     int rdo;
     int max_frame_size;

@@ -21,6 +21,7 @@
  */
 
 #include "error_resilience.h"
+#include "hwaccel.h"
 #include "idctdsp.h"
 #include "internal.h"
 #include "mpegutils.h"
@@ -184,6 +185,10 @@ static int mpeg4_decode_sprite_trajectory(Mpeg4DecContext *ctx, GetBitContext *g
     int d[4][2]             = { { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } };
 
     if (w <= 0 || h <= 0)
+        return AVERROR_INVALIDDATA;
+
+    /* the decoder was not properly initialized and we cannot continue */
+    if (sprite_trajectory.table == NULL)
         return AVERROR_INVALIDDATA;
 
     for (i = 0; i < ctx->num_sprite_warping_points; i++) {
@@ -1274,7 +1279,7 @@ static int mpeg4_decode_mb(MpegEncContext *s, int16_t block[6][64])
     Mpeg4DecContext *ctx = (Mpeg4DecContext *)s;
     int cbpc, cbpy, i, cbp, pred_x, pred_y, mx, my, dquant;
     int16_t *mot_val;
-    static int8_t quant_tab[4] = { -1, -2, 1, 2 };
+    static const int8_t quant_tab[4] = { -1, -2, 1, 2 };
     const int xy = s->mb_x + s->mb_y * s->mb_stride;
 
     assert(s->h263_pred);
@@ -2621,6 +2626,15 @@ AVCodec ff_mpeg4_decoder = {
     .capabilities          = AV_CODEC_CAP_DRAW_HORIZ_BAND | AV_CODEC_CAP_DR1 |
                              AV_CODEC_CAP_TRUNCATED | AV_CODEC_CAP_DELAY |
                              AV_CODEC_CAP_FRAME_THREADS,
+    .hw_configs            = (const AVCodecHWConfigInternal*[]) {
+#if CONFIG_MPEG4_VAAPI_HWACCEL
+                               HWACCEL_VAAPI(mpeg4),
+#endif
+#if CONFIG_MPEG4_VDPAU_HWACCEL
+                               HWACCEL_VDPAU(mpeg4),
+#endif
+                               NULL
+                           },
     .flush                 = ff_mpeg_flush,
     .pix_fmts              = ff_h263_hwaccel_pixfmt_list_420,
     .profiles              = NULL_IF_CONFIG_SMALL(ff_mpeg4_video_profiles),

@@ -41,10 +41,12 @@ OBJS-$(CONFIG_AAC_DECODER)             += arm/aacpsdsp_init_arm.o       \
                                           arm/sbrdsp_init_arm.o
 OBJS-$(CONFIG_APE_DECODER)             += arm/apedsp_init_arm.o
 OBJS-$(CONFIG_DCA_DECODER)             += arm/dcadsp_init_arm.o
+OBJS-$(CONFIG_HEVC_DECODER)            += arm/hevcdsp_init_arm.o
 OBJS-$(CONFIG_MLP_DECODER)             += arm/mlpdsp_init_arm.o
 OBJS-$(CONFIG_RV40_DECODER)            += arm/rv40dsp_init_arm.o
 OBJS-$(CONFIG_VORBIS_DECODER)          += arm/vorbisdsp_init_arm.o
 OBJS-$(CONFIG_VP6_DECODER)             += arm/vp6dsp_init_arm.o
+OBJS-$(CONFIG_VP9_DECODER)             += arm/vp9dsp_init_arm.o
 
 
 # ARMv5 optimizations
@@ -133,8 +135,13 @@ NEON-OBJS-$(CONFIG_AAC_DECODER)        += arm/aacpsdsp_neon.o           \
 NEON-OBJS-$(CONFIG_APE_DECODER)        += arm/apedsp_neon.o
 NEON-OBJS-$(CONFIG_DCA_DECODER)        += arm/dcadsp_neon.o             \
                                           arm/synth_filter_neon.o
+NEON-OBJS-$(CONFIG_HEVC_DECODER)       += arm/hevc_idct.o               \
+                                          arm/hevc_mc.o
 NEON-OBJS-$(CONFIG_RV30_DECODER)       += arm/rv34dsp_neon.o
 NEON-OBJS-$(CONFIG_RV40_DECODER)       += arm/rv34dsp_neon.o            \
                                           arm/rv40dsp_neon.o
 NEON-OBJS-$(CONFIG_VORBIS_DECODER)     += arm/vorbisdsp_neon.o
 NEON-OBJS-$(CONFIG_VP6_DECODER)        += arm/vp6dsp_neon.o
+NEON-OBJS-$(CONFIG_VP9_DECODER)        += arm/vp9itxfm_neon.o           \
+                                          arm/vp9lpf_neon.o             \
+                                          arm/vp9mc_neon.o

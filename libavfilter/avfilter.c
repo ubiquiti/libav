@@ -19,6 +19,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "libavutil/avassert.h"
 #include "libavutil/avstring.h"
 #include "libavutil/buffer.h"
 #include "libavutil/channel_layout.h"
@@ -212,14 +213,12 @@ int avfilter_config_links(AVFilterContext *filter)
             }
 
             if (link->src->nb_inputs && link->src->inputs[0]->hw_frames_ctx &&
-                !link->hw_frames_ctx) {
-                AVHWFramesContext *input_ctx = (AVHWFramesContext*)link->src->inputs[0]->hw_frames_ctx->data;
-
-                if (input_ctx->format == link->format) {
-                    link->hw_frames_ctx = av_buffer_ref(link->src->inputs[0]->hw_frames_ctx);
-                    if (!link->hw_frames_ctx)
-                        return AVERROR(ENOMEM);
-                }
+                !(link->src->filter->flags_internal & FF_FILTER_FLAG_HWFRAME_AWARE)) {
+                av_assert0(!link->hw_frames_ctx &&
+                           "should not be set by non-hwframe-aware filter");
+                link->hw_frames_ctx = av_buffer_ref(link->src->inputs[0]->hw_frames_ctx);
+                if (!link->hw_frames_ctx)
+                    return AVERROR(ENOMEM);
             }
 
             if ((config_link = link->dstpad->config_props))
@@ -293,10 +292,7 @@ int ff_poll_frame(AVFilterLink *link)
 
 static AVFilter *first_filter;
 
-#if !FF_API_NOCONST_GET_NAME
-const
-#endif
-AVFilter *avfilter_get_by_name(const char *name)
+const AVFilter *avfilter_get_by_name(const char *name)
 {
     const AVFilter *f = NULL;
 
@@ -324,17 +320,6 @@ const AVFilter *avfilter_next(const AVFilter *prev)
 {
     return prev ? prev->next : first_filter;
 }
-
-#if FF_API_OLD_FILTER_REGISTER
-AVFilter **av_filter_next(AVFilter **filter)
-{
-    return filter ? &(*filter)->next : &first_filter;
-}
-
-void avfilter_uninit(void)
-{
-}
-#endif
 
 int avfilter_pad_count(const AVFilterPad *pads)
 {
@@ -476,14 +461,6 @@ err:
     return NULL;
 }
 
-#if FF_API_AVFILTER_OPEN
-int avfilter_open(AVFilterContext **filter_ctx, AVFilter *filter, const char *inst_name)
-{
-    *filter_ctx = ff_filter_alloc(filter, inst_name);
-    return *filter_ctx ? 0 : AVERROR(ENOMEM);
-}
-#endif
-
 static void free_link(AVFilterLink *link)
 {
     if (!link)
@@ -570,13 +547,6 @@ static int process_unnamed_options(AVFilterContext *ctx, AVDictionary **options,
     return 0;
 }
 
-#if FF_API_AVFILTER_INIT_FILTER
-int avfilter_init_filter(AVFilterContext *filter, const char *args, void *opaque)
-{
-    return avfilter_init_str(filter, args);
-}
-#endif
-
 int avfilter_init_dict(AVFilterContext *ctx, AVDictionary **options)
 {
     int ret = 0;
@@ -625,87 +595,11 @@ int avfilter_init_str(AVFilterContext *filter, const char *args)
             return AVERROR(EINVAL);
         }
 
-#if FF_API_OLD_FILTER_OPTS
-        if (!strcmp(filter->filter->name, "scale") &&
-            strchr(args, ':') && strchr(args, ':') < strchr(args, '=')) {
-            /* old w:h:flags=<flags> syntax */
-            char *copy = av_strdup(args);
-            char *p;
-
-            av_log(filter, AV_LOG_WARNING, "The <w>:<h>:flags=<flags> option "
-                   "syntax is deprecated. Use either <w>:<h>:<flags> or "
-                   "w=<w>:h=<h>:flags=<flags>.\n");
-
-            if (!copy) {
-                ret = AVERROR(ENOMEM);
-                goto fail;
-            }
-
-            p = strrchr(copy, ':');
-            if (p) {
-                *p++ = 0;
-                ret = av_dict_parse_string(&options, p, "=", ":", 0);
-            }
-            if (ret >= 0)
-                ret = process_unnamed_options(filter, &options, copy);
-            av_freep(&copy);
-
-            if (ret < 0)
-                goto fail;
-        } else
-#endif
-
         if (strchr(args, '=')) {
             /* assume a list of key1=value1:key2=value2:... */
             ret = av_dict_parse_string(&options, args, "=", ":", 0);
             if (ret < 0)
                 goto fail;
-#if FF_API_OLD_FILTER_OPTS
-        } else if (!strcmp(filter->filter->name, "format")     ||
-                   !strcmp(filter->filter->name, "noformat")   ||
-                   !strcmp(filter->filter->name, "frei0r")     ||
-                   !strcmp(filter->filter->name, "frei0r_src") ||
-                   !strcmp(filter->filter->name, "ocv")) {
-            /* a hack for compatibility with the old syntax
-             * replace colons with |s */
-            char *copy = av_strdup(args);
-            char *p    = copy;
-            int nb_leading = 0; // number of leading colons to skip
-
-            if (!copy) {
-                ret = AVERROR(ENOMEM);
-                goto fail;
-            }
-
-            if (!strcmp(filter->filter->name, "frei0r") ||
-                !strcmp(filter->filter->name, "ocv"))
-                nb_leading = 1;
-            else if (!strcmp(filter->filter->name, "frei0r_src"))
-                nb_leading = 3;
-
-            while (nb_leading--) {
-                p = strchr(p, ':');
-                if (!p) {
-                    p = copy + strlen(copy);
-                    break;
-                }
-                p++;
-            }
-
-            if (strchr(p, ':')) {
-                av_log(filter, AV_LOG_WARNING, "This syntax is deprecated. Use "
-                       "'|' to separate the list items.\n");
-            }
-
-            while ((p = strchr(p, ':')))
-                *p++ = '|';
-
-            ret = process_unnamed_options(filter, &options, copy);
-            av_freep(&copy);
-
-            if (ret < 0)
-                goto fail;
-#endif
         } else {
             ret = process_unnamed_options(filter, &options, args);
             if (ret < 0)

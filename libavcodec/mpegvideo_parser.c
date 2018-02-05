@@ -97,7 +97,14 @@ static void mpegvideo_extract_headers(AVCodecParserContext *s,
 
                         pc->width  |=(horiz_size_ext << 12);
                         pc->height |=( vert_size_ext << 12);
-                        avctx->bit_rate += (bit_rate_ext << 18) * 400;
+
+                        bit_rate_ext <<= 18;
+                        if (bit_rate_ext < INT_MAX / 400 &&
+                            bit_rate_ext * 400 < INT_MAX - avctx->bit_rate) {
+                            avctx->bit_rate += bit_rate_ext * 400;
+                        } else
+                            avctx->bit_rate = 0;
+
                         if(did_set_size)
                             ff_set_dimensions(avctx, pc->width, pc->height);
                         avctx->framerate.num = pc->frame_rate.num * (frame_rate_ext_n + 1) * 2;
@@ -151,14 +158,11 @@ static void mpegvideo_extract_headers(AVCodecParserContext *s,
 
     if (pix_fmt != AV_PIX_FMT_NONE) {
         s->format = pix_fmt;
-        s->width  = s->coded_width  = pc->width;
-        s->height = s->coded_height = pc->height;
+        s->width  = pc->width;
+        s->height = pc->height;
+        s->coded_width  = FFALIGN(pc->width,  16);
+        s->coded_height = FFALIGN(pc->height, 16);
     }
-
-#if FF_API_AVCTX_TIMEBASE
-    if (avctx->framerate.num)
-        avctx->time_base = av_inv_q(avctx->framerate);
-#endif
 }
 
 static int mpegvideo_parse(AVCodecParserContext *s,

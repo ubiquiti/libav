@@ -2,6 +2,24 @@ Entries are sorted chronologically from oldest to youngest within each release,
 releases are sorted from youngest to oldest.
 
 version <next>:
+- Support for spherical videos
+- Intel QSV-accelerated VP8 and VC-1 decoding
+- VAAPI-accelerated VP8 and HEVC decoding
+- VAAPI-accelerated deinterlacing
+- config.log and other configuration files moved into avbuild/ directory
+- VAAPI-accelerated MPEG-2 and VP8 encoding
+- Apple Pixlet decoder
+- The x86 assembler default switched from yasm to nasm, pass
+  --x86asmexe=yasm to configure to restore the old behavior.
+- Cineform HD decoder
+- VP9 superframe split/merge bitstream filters
+- FM Screen Capture Codec decoder
+- ClearVideo decoder (I-frames only)
+- support for decoding through D3D11VA in avconv
+- Cinepak encoder
+- Intel QSV-accelerated MJPEG encoding
+- NVIDIA CUVID-accelerated H.264 and HEVC decoding
+- Intel QSV-accelerated overlay filter
 
 
 version 12:

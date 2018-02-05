@@ -32,7 +32,7 @@
 #include "h264dec.h"
 #include "h264_mvpred.h"
 #include "h264data.h"
-#include "golomb.h"
+#include "golomb_legacy.h"
 #include "mpegutils.h"
 
 #include <assert.h>
@@ -579,8 +579,10 @@ static int decode_residual(const H264Context *h, H264SliceContext *sl,
         for(i=1;i<total_coeff && zeros_left > 0;i++) { \
             if(zeros_left < 7) \
                 run_before= get_vlc2(gb, run_vlc[zeros_left - 1].table, RUN_VLC_BITS, 1); \
-            else \
+            else {\
                 run_before= get_vlc2(gb, run7_vlc.table, RUN7_VLC_BITS, 2); \
+                run_before = FFMIN(zeros_left, run_before);\
+            }\
             zeros_left -= run_before; \
             scantable -= 1 + run_before; \
             ((type*)block)[*scantable]= level[i]; \
@@ -594,8 +596,10 @@ static int decode_residual(const H264Context *h, H264SliceContext *sl,
         for(i=1;i<total_coeff && zeros_left > 0;i++) { \
             if(zeros_left < 7) \
                 run_before= get_vlc2(gb, run_vlc[zeros_left - 1].table, RUN_VLC_BITS, 1); \
-            else \
+            else {\
                 run_before= get_vlc2(gb, run7_vlc.table, RUN7_VLC_BITS, 2); \
+                run_before = FFMIN(zeros_left, run_before);\
+            }\
             zeros_left -= run_before; \
             scantable -= 1 + run_before; \
             ((type*)block)[*scantable]= ((int)(level[i] * qmul[*scantable] + 32))>>6; \
@@ -1089,14 +1093,6 @@ decode_intra_mb:
         const uint8_t *scan, *scan8x8;
         const int max_qp = 51 + 6 * (h->ps.sps->bit_depth_luma - 8);
 
-        if(IS_INTERLACED(mb_type)){
-            scan8x8 = sl->qscale ? h->field_scan8x8_cavlc : h->field_scan8x8_cavlc_q0;
-            scan    = sl->qscale ? h->field_scan : h->field_scan_q0;
-        }else{
-            scan8x8 = sl->qscale ? h->zigzag_scan8x8_cavlc : h->zigzag_scan8x8_cavlc_q0;
-            scan    = sl->qscale ? h->zigzag_scan : h->zigzag_scan_q0;
-        }
-
         dquant= get_se_golomb(&sl->gb);
 
         sl->qscale += dquant;
@@ -1112,6 +1108,14 @@ decode_intra_mb:
 
         sl->chroma_qp[0] = get_chroma_qp(h->ps.pps, 0, sl->qscale);
         sl->chroma_qp[1] = get_chroma_qp(h->ps.pps, 1, sl->qscale);
+
+        if(IS_INTERLACED(mb_type)){
+            scan8x8 = sl->qscale ? h->field_scan8x8_cavlc : h->field_scan8x8_cavlc_q0;
+            scan    = sl->qscale ? h->field_scan : h->field_scan_q0;
+        }else{
+            scan8x8 = sl->qscale ? h->zigzag_scan8x8_cavlc : h->zigzag_scan8x8_cavlc_q0;
+            scan    = sl->qscale ? h->zigzag_scan : h->zigzag_scan_q0;
+        }
 
         if ((ret = decode_luma_residual(h, sl, gb, scan, scan8x8, pixel_shift, mb_type, cbp, 0)) < 0 ) {
             return -1;

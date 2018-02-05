@@ -112,11 +112,16 @@ static int smacker_read_header(AVFormatContext *s)
     /* read and check header */
     smk->magic = avio_rl32(pb);
     if (smk->magic != MKTAG('S', 'M', 'K', '2') && smk->magic != MKTAG('S', 'M', 'K', '4'))
-        return -1;
+        return AVERROR_INVALIDDATA;
     smk->width = avio_rl32(pb);
     smk->height = avio_rl32(pb);
     smk->frames = avio_rl32(pb);
     smk->pts_inc = (int32_t)avio_rl32(pb);
+    if (smk->pts_inc > INT_MAX / 100) {
+        av_log(s, AV_LOG_ERROR, "pts_inc %d is too large\n", smk->pts_inc);
+        return AVERROR_INVALIDDATA;
+    }
+
     smk->flags = avio_rl32(pb);
     if(smk->flags & SMACKER_FLAG_RING_FRAME)
         smk->frames++;
@@ -126,7 +131,7 @@ static int smacker_read_header(AVFormatContext *s)
 
     if(smk->treesize >= UINT_MAX/4){ // smk->treesize + 16 must not overflow (this check is probably redundant)
         av_log(s, AV_LOG_ERROR, "treesize too large\n");
-        return -1;
+        return AVERROR_INVALIDDATA;
     }
 
 //FIXME remove extradata "rebuilding"
@@ -142,7 +147,7 @@ static int smacker_read_header(AVFormatContext *s)
     /* setup data */
     if(smk->frames > 0xFFFFFF) {
         av_log(s, AV_LOG_ERROR, "Too many frames: %"PRIu32"\n", smk->frames);
-        return -1;
+        return AVERROR_INVALIDDATA;
     }
     smk->frm_size = av_malloc(smk->frames * 4);
     smk->frm_flags = av_malloc(smk->frames);
@@ -160,7 +165,7 @@ static int smacker_read_header(AVFormatContext *s)
     /* init video codec */
     st = avformat_new_stream(s, NULL);
     if (!st)
-        return -1;
+        return AVERROR(ENOMEM);
     smk->videoindex = st->index;
     st->codecpar->width = smk->width;
     st->codecpar->height = smk->height;
@@ -221,7 +226,7 @@ static int smacker_read_header(AVFormatContext *s)
                smk->treesize + 16);
         av_free(smk->frm_size);
         av_free(smk->frm_flags);
-        return -1;
+        return AVERROR(ENOMEM);
     }
     ret = avio_read(pb, st->codecpar->extradata + 16, st->codecpar->extradata_size - 16);
     if(ret != st->codecpar->extradata_size - 16){

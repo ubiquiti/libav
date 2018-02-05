@@ -165,21 +165,30 @@ AVIOContext *avio_alloc_context(
     return s;
 }
 
+void avio_context_free(AVIOContext **ps)
+{
+    av_freep(ps);
+}
+
 static void flush_buffer(AVIOContext *s)
 {
     if (s->buf_ptr > s->buffer) {
+        int size = s->buf_ptr - s->buffer;
         if (!s->error) {
             int ret = 0;
             if (s->write_data_type)
                 ret = s->write_data_type(s->opaque, s->buffer,
-                                         s->buf_ptr - s->buffer,
+                                         size,
                                          s->current_type,
                                          s->last_time);
             else if (s->write_packet)
                 ret = s->write_packet(s->opaque, s->buffer,
-                                      s->buf_ptr - s->buffer);
+                                      size);
             if (ret < 0) {
                 s->error = ret;
+            } else {
+                if (s->pos + size > s->written)
+                    s->written = s->pos + size;
             }
         }
         if (s->current_type == AVIO_DATA_MARKER_SYNC_POINT ||
@@ -192,7 +201,7 @@ static void flush_buffer(AVIOContext *s)
                                                  s->buf_ptr - s->checksum_ptr);
             s->checksum_ptr = s->buffer;
         }
-        s->pos += s->buf_ptr - s->buffer;
+        s->pos += size;
     }
     s->buf_ptr = s->buffer;
 }
@@ -300,6 +309,9 @@ int64_t avio_size(AVIOContext *s)
 
     if (!s)
         return AVERROR(EINVAL);
+
+    if (s->written)
+        return s->written;
 
     if (!s->seek)
         return AVERROR(ENOSYS);
@@ -609,7 +621,7 @@ int ffio_read_indirect(AVIOContext *s, unsigned char *buf, int size, const unsig
     }
 }
 
-int ffio_read_partial(AVIOContext *s, unsigned char *buf, int size)
+int avio_read_partial(AVIOContext *s, unsigned char *buf, int size)
 {
     int len;
 
@@ -1000,7 +1012,9 @@ int avio_close(AVIOContext *s)
     av_freep(&internal->protocols);
     av_freep(&s->opaque);
     av_freep(&s->buffer);
-    av_free(s);
+
+    avio_context_free(&s);
+
     return ffurl_close(h);
 }
 
@@ -1179,7 +1193,9 @@ int avio_close_dyn_buf(AVIOContext *s, uint8_t **pbuffer)
     *pbuffer = d->buffer;
     size = d->size;
     av_free(d);
-    av_free(s);
+
+    avio_context_free(&s);
+
     return size - padding;
 }
 
@@ -1222,6 +1238,8 @@ int ffio_close_null_buf(AVIOContext *s)
 
     size = d->size;
     av_free(d);
-    av_free(s);
+
+    avio_context_free(&s);
+
     return size;
 }

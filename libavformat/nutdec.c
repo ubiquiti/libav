@@ -76,36 +76,10 @@ static uint64_t get_fourcc(AVIOContext *bc)
         return -1;
 }
 
-#ifdef TRACE
-static inline uint64_t get_v_trace(AVIOContext *bc, const char *file,
-                                   const char *func, int line)
-{
-    uint64_t v = ffio_read_varlen(bc);
-
-    av_log(NULL, AV_LOG_DEBUG, "get_v %5"PRId64" / %"PRIX64" in %s %s:%d\n",
-           v, v, file, func, line);
-    return v;
-}
-
-static inline int64_t get_s_trace(AVIOContext *bc, const char *file,
-                                  const char *func, int line)
-{
-    int64_t v = get_s(bc);
-
-    av_log(NULL, AV_LOG_DEBUG, "get_s %5"PRId64" / %"PRIX64" in %s %s:%d\n",
-           v, v, file, func, line);
-    return v;
-}
-
-#define ffio_read_varlen(bc) get_v_trace(bc,  __FILE__, __PRETTY_FUNCTION__, __LINE__)
-#define get_s(bc)            get_s_trace(bc,  __FILE__, __PRETTY_FUNCTION__, __LINE__)
-#endif
-
 static int get_packetheader(NUTContext *nut, AVIOContext *bc,
                             int calculate_checksum, uint64_t startcode)
 {
     int64_t size;
-//    start = avio_tell(bc) - 8;
 
     startcode = av_be2ne64(startcode);
     startcode = ff_crc04C11DB7_update(0, (uint8_t*) &startcode, 8);
@@ -1013,7 +987,8 @@ static int read_seek(AVFormatContext *s, int stream_index,
         pos2 = st->index_entries[index].pos;
         ts   = st->index_entries[index].timestamp;
     } else {
-        av_tree_find(nut->syncpoints, &dummy, (void *) ff_nut_sp_pts_cmp,
+        av_tree_find(nut->syncpoints, &dummy,
+                     (int (*)(void *, const void *)) ff_nut_sp_pts_cmp,
                      (void **) next_node);
         av_log(s, AV_LOG_DEBUG, "%"PRIu64"-%"PRIu64" %"PRId64"-%"PRId64"\n",
                next_node[0]->pos, next_node[1]->pos, next_node[0]->ts,
@@ -1026,7 +1001,8 @@ static int read_seek(AVFormatContext *s, int stream_index,
         if (!(flags & AVSEEK_FLAG_BACKWARD)) {
             dummy.pos    = pos + 16;
             next_node[1] = &nopts_sp;
-            av_tree_find(nut->syncpoints, &dummy, (void *) ff_nut_sp_pos_cmp,
+            av_tree_find(nut->syncpoints, &dummy,
+                         (int (*)(void *, const void *)) ff_nut_sp_pos_cmp,
                          (void **) next_node);
             pos2 = ff_gen_search(s, -2, dummy.pos, next_node[0]->pos,
                                  next_node[1]->pos, next_node[1]->pos,
@@ -1037,7 +1013,8 @@ static int read_seek(AVFormatContext *s, int stream_index,
             // FIXME dir but I think it does not matter
         }
         dummy.pos = pos;
-        sp = av_tree_find(nut->syncpoints, &dummy, (void *) ff_nut_sp_pos_cmp,
+        sp = av_tree_find(nut->syncpoints, &dummy,
+                          (int (*)(void *, const void *)) ff_nut_sp_pos_cmp,
                           NULL);
 
         assert(sp);

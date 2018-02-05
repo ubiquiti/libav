@@ -31,8 +31,9 @@
 
 #define APE_TAG_VERSION               2000
 #define APE_TAG_FOOTER_BYTES          32
+#define APE_TAG_HEADER_BYTES          32
 #define APE_TAG_FLAG_CONTAINS_HEADER  (1 << 31)
-#define APE_TAG_FLAG_CONTAINS_FOOTER  (1 << 30)
+#define APE_TAG_FLAG_LACKS_FOOTER     (1 << 30)
 #define APE_TAG_FLAG_IS_HEADER        (1 << 29)
 #define APE_TAG_FLAG_IS_BINARY        (1 << 1)
 
@@ -154,7 +155,6 @@ int64_t ff_ape_parse_tag(AVFormatContext *s)
         av_log(s, AV_LOG_ERROR, "Invalid tag size %"PRIu32".\n", tag_bytes);
         return 0;
     }
-    tag_start = file_size - tag_bytes - APE_TAG_FOOTER_BYTES;
 
     fields = avio_rl32(pb);    /* number of fields */
     if (fields > 65536) {
@@ -169,6 +169,11 @@ int64_t ff_ape_parse_tag(AVFormatContext *s)
     }
 
     avio_seek(pb, file_size - tag_bytes, SEEK_SET);
+
+    if (val & APE_TAG_FLAG_CONTAINS_HEADER)
+        tag_bytes += APE_TAG_HEADER_BYTES;
+
+    tag_start = file_size - tag_bytes;
 
     for (i=0; i<fields; i++)
         if (ape_tag_read_field(s) < 0) break;
@@ -194,8 +199,7 @@ int ff_ape_write_tag(AVFormatContext *s)
     avio_wl32(s->pb, 0);                // reserve space for tag count
 
     // flags
-    avio_wl32(s->pb, APE_TAG_FLAG_CONTAINS_HEADER | APE_TAG_FLAG_CONTAINS_FOOTER |
-                     APE_TAG_FLAG_IS_HEADER);
+    avio_wl32(s->pb, APE_TAG_FLAG_CONTAINS_HEADER | APE_TAG_FLAG_IS_HEADER);
     ffio_fill(s->pb, 0, 8);             // reserved
 
     while ((e = av_dict_get(s->metadata, "", e, AV_DICT_IGNORE_SUFFIX))) {
@@ -217,7 +221,7 @@ int ff_ape_write_tag(AVFormatContext *s)
     avio_wl32(s->pb, count);            // tag count
 
     // flags
-    avio_wl32(s->pb, APE_TAG_FLAG_CONTAINS_HEADER | APE_TAG_FLAG_CONTAINS_FOOTER);
+    avio_wl32(s->pb, APE_TAG_FLAG_CONTAINS_HEADER);
     ffio_fill(s->pb, 0, 8);             // reserved
 
     // update values in the header

@@ -36,6 +36,7 @@
 #include "h2645_parse.h"
 #include "hevc.h"
 #include "hevc_ps.h"
+#include "hevc_sei.h"
 #include "hevcdsp.h"
 #include "internal.h"
 #include "thread.h"
@@ -374,8 +375,6 @@ typedef struct HEVCFrame {
     int poc;
     struct HEVCFrame *collocated_ref;
 
-    HEVCWindow window;
-
     AVBufferRef *tab_mvf_buf;
     AVBufferRef *rpl_tab_buf;
     AVBufferRef *rpl_buf;
@@ -463,6 +462,8 @@ typedef struct HEVCContext {
     AVFrame *output_frame;
 
     HEVCParamSets ps;
+    HEVCSEI sei;
+    struct AVMD5 *md5_ctx;
 
     AVBufferPool *tab_mvf_pool;
     AVBufferPool *rpl_tab_pool;
@@ -524,11 +525,6 @@ typedef struct HEVCContext {
     // type of the first VCL NAL of the current frame
     enum HEVCNALUnitType first_nal_type;
 
-    // for checking the frame checksums
-    struct AVMD5 *md5_ctx;
-    uint8_t       md5[3][16];
-    uint8_t is_md5;
-
     uint8_t context_initialized;
     uint8_t is_nalff;       ///< this flag is != 0 if bitstream is encapsulated
                             ///< as a format defined in 14496-15
@@ -536,20 +532,7 @@ typedef struct HEVCContext {
 
     int nal_length_size;    ///< Number of bytes used for nal length (1, 2 or 4)
     int nuh_layer_id;
-
-    /** frame packing arrangement variables */
-    int sei_frame_packing_present;
-    int frame_packing_arrangement_type;
-    int content_interpretation_type;
-    int quincunx_subsampling;
-
-    /** display orientation */
-    int sei_display_orientation_present;
-    int sei_anticlockwise_rotation;
-    int sei_hflip, sei_vflip;
 } HEVCContext;
-
-int ff_hevc_decode_nal_sei(HEVCContext *s);
 
 /**
  * Mark all frames in DPB as unused for reference.

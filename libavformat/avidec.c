@@ -613,7 +613,7 @@ static int avi_read_header(AVFormatContext *s)
                         avio_skip(pb, size);
                         break;
                     }
-                    tag1 = ff_get_bmp_header(pb, st);
+                    tag1 = ff_get_bmp_header(pb, st, NULL);
 
                     if (tag1 == MKTAG('D', 'X', 'S', 'B') ||
                         tag1 == MKTAG('D', 'X', 'S', 'A')) {
@@ -901,7 +901,7 @@ static int read_gab2_sub(AVStream *st, AVPacket *pkt)
         return 1;
 
 error:
-        av_freep(&pb);
+        avio_context_free(&pb);
     }
     return 0;
 }
@@ -1238,17 +1238,6 @@ resync:
 //                pkt->dts += ast->start;
             if (ast->sample_size)
                 pkt->dts /= ast->sample_size;
-            av_log(s, AV_LOG_TRACE,
-                    "dts:%"PRId64" offset:%"PRId64" %d/%d smpl_siz:%d "
-                    "base:%d st:%d size:%d\n",
-                    pkt->dts,
-                    ast->frame_offset,
-                    ast->scale,
-                    ast->rate,
-                    ast->sample_size,
-                    AV_TIME_BASE,
-                    avi->stream_index,
-                    size);
             pkt->stream_index = avi->stream_index;
 
             if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
@@ -1453,12 +1442,6 @@ static int avi_load_index(AVFormatContext *s)
             break;
         tag  = avio_rl32(pb);
         size = avio_rl32(pb);
-        av_log(s, AV_LOG_TRACE, "tag=%c%c%c%c size=0x%x\n",
-                 tag        & 0xff,
-                (tag >>  8) & 0xff,
-                (tag >> 16) & 0xff,
-                (tag >> 24) & 0xff,
-                size);
 
         if (tag == MKTAG('i', 'd', 'x', '1') &&
             avi_read_idx1(s, size) >= 0) {
@@ -1593,7 +1576,7 @@ static int avi_read_close(AVFormatContext *s)
         AVIStream *ast = st->priv_data;
         if (ast) {
             if (ast->sub_ctx) {
-                av_freep(&ast->sub_ctx->pb);
+                avio_context_free(&ast->sub_ctx->pb);
                 avformat_close_input(&ast->sub_ctx);
             }
             av_free(ast->sub_buffer);

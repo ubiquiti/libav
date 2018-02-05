@@ -682,6 +682,9 @@ static int http_connect(URLContext *h, const char *path, const char *local_path,
     s->willclose        = 0;
     s->end_chunked_post = 0;
     s->end_header       = 0;
+#if CONFIG_ZLIB
+    s->compressed       = 0;
+#endif
     if (post && !s->post_data && !send_expect_100) {
         /* Pretend that it did work. We didn't read any header yet, since
          * we've still to send the POST data, but the code calling this
@@ -784,8 +787,9 @@ static int http_read_stream(URLContext *h, uint8_t *buf, int size)
 
                 av_log(NULL, AV_LOG_TRACE, "Chunked encoding data size: %"PRId64"'\n",
                         s->chunksize);
-
-                if (!s->chunksize)
+                if (s->chunksize < 0)
+                    return AVERROR_INVALIDDATA;
+                else if (!s->chunksize)
                     return 0;
                 break;
             }

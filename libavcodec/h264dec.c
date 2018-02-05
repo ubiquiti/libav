@@ -36,6 +36,7 @@
 #include "cabac_functions.h"
 #include "error_resilience.h"
 #include "avcodec.h"
+#include "golomb_legacy.h"
 #include "h264.h"
 #include "h264dec.h"
 #include "h2645_parse.h"
@@ -43,7 +44,7 @@
 #include "h264chroma.h"
 #include "h264_mvpred.h"
 #include "h264_ps.h"
-#include "golomb.h"
+#include "hwaccel.h"
 #include "mathops.h"
 #include "me_cmp.h"
 #include "mpegutils.h"
@@ -285,11 +286,15 @@ static int h264_init_context(AVCodecContext *avctx, H264Context *h)
 
     h->avctx                 = avctx;
 
+    h->width_from_caller     = avctx->width;
+    h->height_from_caller    = avctx->height;
+
     h->picture_structure     = PICT_FRAME;
     h->workaround_bugs       = avctx->workaround_bugs;
     h->flags                 = avctx->flags;
     h->poc.prev_poc_msb      = 1 << 16;
     h->recovery_frame        = -1;
+    h->x264_build            = -1;
     h->frame_recovered       = 0;
 
     h->next_outputed_poc = INT_MIN;
@@ -361,7 +366,7 @@ static av_cold int h264_decode_end(AVCodecContext *avctx)
 
 static AVOnce h264_vlc_init = AV_ONCE_INIT;
 
-av_cold int ff_h264_decode_init(AVCodecContext *avctx)
+static av_cold int h264_decode_init(AVCodecContext *avctx)
 {
     H264Context *h = avctx->priv_data;
     int ret;
@@ -449,7 +454,6 @@ void ff_h264_flush_change(H264Context *h)
     if (h->cur_pic_ptr)
         h->cur_pic_ptr->reference = 0;
     h->first_field = 0;
-    ff_h264_sei_uninit(&h->sei);
     h->recovery_frame = -1;
     h->frame_recovered = 0;
 }
@@ -463,6 +467,7 @@ static void flush_dpb(AVCodecContext *avctx)
     memset(h->delayed_pic, 0, sizeof(h->delayed_pic));
 
     ff_h264_flush_change(h);
+    ff_h264_sei_uninit(&h->sei);
 
     for (i = 0; i < H264_MAX_PICTURE_COUNT; i++)
         ff_h264_unref_picture(h, &h->DPB[i]);
@@ -520,6 +525,7 @@ static int decode_nal_units(H264Context *h, const uint8_t *buf, int buf_size)
 
     if (!(avctx->flags2 & AV_CODEC_FLAG2_CHUNKS)) {
         h->current_slice = 0;
+        h->field_started = 0;
         if (!h->first_field)
             h->cur_pic_ptr = NULL;
         ff_h264_sei_uninit(&h->sei);
@@ -573,7 +579,7 @@ static int decode_nal_units(H264Context *h, const uint8_t *buf, int buf_size)
             if ((err = ff_h264_queue_decode_slice(h, nal)))
                 break;
 
-            if (avctx->active_thread_type & FF_THREAD_FRAME && !h->avctx->hwaccel &&
+            if (avctx->active_thread_type & FF_THREAD_FRAME &&
                 i >= nals_needed && !h->setup_finished && h->cur_pic_ptr) {
                 ff_thread_finish_setup(avctx);
                 h->setup_finished = 1;
@@ -658,26 +664,6 @@ static int get_consumed_bytes(int pos, int buf_size)
     return pos;
 }
 
-static int output_frame(H264Context *h, AVFrame *dst, AVFrame *src)
-{
-    int i;
-    int ret = av_frame_ref(dst, src);
-    if (ret < 0)
-        return ret;
-
-    if (!h->ps.sps || !h->ps.sps->crop)
-        return 0;
-
-    for (i = 0; i < 3; i++) {
-        int hshift = (i > 0) ? h->chroma_x_shift : 0;
-        int vshift = (i > 0) ? h->chroma_y_shift : 0;
-        int off    = ((h->ps.sps->crop_left >> hshift) << h->pixel_shift) +
-                     (h->ps.sps->crop_top >> vshift) * dst->linesize[i];
-        dst->data[i] += off;
-    }
-    return 0;
-}
-
 static int h264_decode_frame(AVCodecContext *avctx, void *data,
                              int *got_frame, AVPacket *avpkt)
 {
@@ -719,7 +705,7 @@ out:
             h->delayed_pic[i] = h->delayed_pic[i + 1];
 
         if (out) {
-            ret = output_frame(h, pict, out->f);
+            ret = av_frame_ref(pict, out->f);
             if (ret < 0)
                 return ret;
             *got_frame = 1;
@@ -757,11 +743,12 @@ out:
 
     if (!(avctx->flags2 & AV_CODEC_FLAG2_CHUNKS) ||
         (h->mb_y >= h->mb_height && h->mb_height)) {
-        ff_h264_field_end(h, &h->slice_ctx[0], 0);
+        if (h->field_started)
+            ff_h264_field_end(h, &h->slice_ctx[0], 0);
 
         *got_frame = 0;
         if (h->output_frame->buf[0]) {
-            ret = output_frame(h, pict, h->output_frame) ;
+            ret = av_frame_ref(pict, h->output_frame);
             av_frame_unref(h->output_frame);
             if (ret < 0)
                 return ret;
@@ -796,13 +783,40 @@ AVCodec ff_h264_decoder = {
     .type                  = AVMEDIA_TYPE_VIDEO,
     .id                    = AV_CODEC_ID_H264,
     .priv_data_size        = sizeof(H264Context),
-    .init                  = ff_h264_decode_init,
+    .init                  = h264_decode_init,
     .close                 = h264_decode_end,
     .decode                = h264_decode_frame,
     .capabilities          = /*AV_CODEC_CAP_DRAW_HORIZ_BAND |*/ AV_CODEC_CAP_DR1 |
                              AV_CODEC_CAP_DELAY | AV_CODEC_CAP_SLICE_THREADS |
                              AV_CODEC_CAP_FRAME_THREADS,
-    .caps_internal         = FF_CODEC_CAP_INIT_THREADSAFE,
+    .hw_configs            = (const AVCodecHWConfigInternal*[]) {
+#if CONFIG_H264_CUVID_HWACCEL
+                               HWACCEL_CUVID(h264),
+#endif
+#if CONFIG_H264_DXVA2_HWACCEL
+                               HWACCEL_DXVA2(h264),
+#endif
+#if CONFIG_H264_D3D11VA_HWACCEL
+                               HWACCEL_D3D11VA(h264),
+#endif
+#if CONFIG_H264_D3D11VA2_HWACCEL
+                               HWACCEL_D3D11VA2(h264),
+#endif
+#if CONFIG_H264_VAAPI_HWACCEL
+                               HWACCEL_VAAPI(h264),
+#endif
+#if CONFIG_H264_VDPAU_HWACCEL
+                               HWACCEL_VDPAU(h264),
+#endif
+#if CONFIG_H264_VDA_HWACCEL
+                               HW_CONFIG_HWACCEL(0, 0, 1, VDA, NONE, ff_h264_vda_hwaccel),
+#endif
+#if CONFIG_H264_VDA_OLD_HWACCEL
+                               HW_CONFIG_HWACCEL(0, 0, 1, VDA_VLD, NONE, ff_h264_vda_old_hwaccel),
+#endif
+                               NULL
+                           },
+    .caps_internal         = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_EXPORTS_CROPPING,
     .flush                 = flush_dpb,
     .init_thread_copy      = ONLY_IF_THREADS_ENABLED(decode_init_thread_copy),
     .update_thread_context = ONLY_IF_THREADS_ENABLED(ff_h264_update_thread_context),

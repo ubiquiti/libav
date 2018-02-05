@@ -99,13 +99,6 @@ static int init_muxer(AVFormatContext *s, AVDictionary **options)
     if ((ret = av_opt_set_dict(s, &tmp)) < 0)
         goto fail;
 
-#if FF_API_LAVF_BITEXACT && FF_API_LAVF_AVCTX
-FF_DISABLE_DEPRECATION_WARNINGS
-    if (s->nb_streams && s->streams[0]->codec->flags & AV_CODEC_FLAG_BITEXACT)
-        s->flags |= AVFMT_FLAG_BITEXACT;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
-
     // some sanity checks
     if (s->nb_streams == 0 && !(of->flags & AVFMT_NOSTREAMS)) {
         av_log(s, AV_LOG_ERROR, "no streams\n");
@@ -116,17 +109,6 @@ FF_ENABLE_DEPRECATION_WARNINGS
     for (i = 0; i < s->nb_streams; i++) {
         st  = s->streams[i];
         par = st->codecpar;
-
-#if FF_API_LAVF_CODEC_TB && FF_API_LAVF_AVCTX
-FF_DISABLE_DEPRECATION_WARNINGS
-        if (!st->time_base.num && st->codec->time_base.num) {
-            av_log(s, AV_LOG_WARNING, "Using AVStream.codec.time_base as a "
-                   "timebase hint to the muxer is deprecated. Set "
-                   "AVStream.time_base instead.\n");
-            avpriv_set_pts_info(st, 64, st->codec->time_base.num, st->codec->time_base.den);
-        }
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
 
 #if FF_API_LAVF_AVCTX
 FF_DISABLE_DEPRECATION_WARNINGS
@@ -205,7 +187,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
                     char tagbuf[32];
                     av_get_codec_tag_string(tagbuf, sizeof(tagbuf), par->codec_tag);
                     av_log(s, AV_LOG_ERROR,
-                           "Tag %s/0x%08x incompatible with output codec id '%d'\n",
+                           "Tag %s/0x%08"PRIx32" incompatible with output codec id '%d'\n",
                            tagbuf, par->codec_tag, par->codec_id);
                     ret = AVERROR_INVALIDDATA;
                     goto fail;
@@ -423,7 +405,7 @@ static int prepare_input_packet(AVFormatContext *s, AVPacket *pkt)
     if (ret < 0)
         return ret;
 
-#if !FF_API_COMPUTE_PKT_FIELDS2 && FF_API_LAVF_AVCTX
+#if !FF_API_COMPUTE_PKT_FIELDS2 || !FF_API_LAVF_AVCTX
     /* sanitize the timestamps */
     if (!(s->oformat->flags & AVFMT_NOTIMESTAMPS)) {
         AVStream *st = s->streams[pkt->stream_index];

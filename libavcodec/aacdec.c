@@ -93,11 +93,11 @@
 #include "aac.h"
 #include "aactab.h"
 #include "aacdectab.h"
+#include "adts_header.h"
 #include "cbrt_tablegen.h"
 #include "sbr.h"
 #include "aacsbr.h"
 #include "mpeg4audio.h"
-#include "aacadtsdec.h"
 #include "libavutil/intfloat.h"
 
 #include <assert.h>
@@ -1246,8 +1246,7 @@ static int decode_ics_info(AACContext *ac, IndividualChannelStream *ics,
                 return AVERROR_INVALIDDATA;
             } else {
                 if (aot == AOT_ER_AAC_LD) {
-                    av_log(ac->avctx, AV_LOG_ERROR,
-                           "LTP in ER AAC LD not yet implemented.\n");
+                    avpriv_report_missing_feature(ac->avctx, "LTP in ER AAC LD");
                     return AVERROR_PATCHWELCOME;
                 }
                 if ((ics->ltp.present = get_bits(gb, 1)))
@@ -2706,7 +2705,7 @@ static int parse_adts_frame_header(AACContext *ac, GetBitContext *gb)
     uint8_t layout_map[MAX_ELEM_ID*4][3];
     int layout_map_tags, ret;
 
-    size = avpriv_aac_parse_header(gb, &hdr_info);
+    size = ff_adts_header_parse(gb, &hdr_info);
     if (size > 0) {
         if (hdr_info.num_aac_frames != 1) {
             avpriv_report_missing_feature(ac->avctx,
@@ -3229,7 +3228,7 @@ static int read_audio_mux_element(struct LATMContext *latmctx,
     } else if (!latmctx->aac_ctx.avctx->extradata) {
         av_log(latmctx->aac_ctx.avctx, AV_LOG_DEBUG,
                "no decoder config found\n");
-        return AVERROR(EAGAIN);
+        return 1;
     }
     if (latmctx->audio_mux_version_A == 0) {
         int mux_slot_length_bytes = read_payload_length_info(latmctx, gb);
@@ -3266,8 +3265,8 @@ static int latm_decode_frame(AVCodecContext *avctx, void *out,
     if (muxlength > avpkt->size)
         return AVERROR_INVALIDDATA;
 
-    if ((err = read_audio_mux_element(latmctx, &gb)) < 0)
-        return err;
+    if ((err = read_audio_mux_element(latmctx, &gb)))
+        return (err < 0) ? err : avpkt->size;
 
     if (!latmctx->initialized) {
         if (!avctx->extradata) {

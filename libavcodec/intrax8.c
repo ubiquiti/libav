@@ -759,7 +759,7 @@ av_cold int ff_intrax8_common_init(AVCodecContext *avctx,
                       ff_wmv1_scantable[3]);
 
     ff_intrax8dsp_init(&w->dsp);
-    ff_blockdsp_init(&w->bdsp, avctx);
+    ff_blockdsp_init(&w->bdsp);
 
     return 0;
 }
@@ -769,7 +769,7 @@ av_cold void ff_intrax8_common_end(IntraX8Context *w)
     av_freep(&w->prediction_table);
 }
 
-int ff_intrax8_decode_picture(IntraX8Context *const w, Picture *pict,
+int ff_intrax8_decode_picture(IntraX8Context *w, Picture *pict,
                               GetBitContext *gb, int *mb_x, int *mb_y,
                               int dquant, int quant_offset,
                               int loopfilter, int lowdelay)

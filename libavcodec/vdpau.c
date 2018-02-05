@@ -24,6 +24,7 @@
 #include <limits.h>
 
 #include "avcodec.h"
+#include "decode.h"
 #include "internal.h"
 #include "h264dec.h"
 #include "vc1.h"
@@ -100,6 +101,25 @@ int av_vdpau_get_surface_parameters(AVCodecContext *avctx,
     return 0;
 }
 
+int ff_vdpau_common_frame_params(AVCodecContext *avctx,
+                                 AVBufferRef *hw_frames_ctx)
+{
+    AVHWFramesContext *hw_frames = (AVHWFramesContext*)hw_frames_ctx->data;
+    VdpChromaType type;
+    uint32_t width;
+    uint32_t height;
+
+    if (av_vdpau_get_surface_parameters(avctx, &type, &width, &height))
+        return AVERROR(EINVAL);
+
+    hw_frames->format    = AV_PIX_FMT_VDPAU;
+    hw_frames->sw_format = avctx->sw_pix_fmt;
+    hw_frames->width     = width;
+    hw_frames->height    = height;
+
+    return 0;
+}
+
 int ff_vdpau_common_init(AVCodecContext *avctx, VdpDecoderProfile profile,
                          int level)
 {
@@ -115,32 +135,53 @@ int ff_vdpau_common_init(AVCodecContext *avctx, VdpDecoderProfile profile,
     VdpChromaType type;
     uint32_t width;
     uint32_t height;
+    int ret;
 
     vdctx->width            = UINT32_MAX;
     vdctx->height           = UINT32_MAX;
-    hwctx->reset            = 0;
-
-    if (hwctx->context.decoder != VDP_INVALID_HANDLE) {
-        vdctx->decoder = hwctx->context.decoder;
-        vdctx->render  = hwctx->context.render;
-        vdctx->device  = VDP_INVALID_HANDLE;
-        return 0; /* Decoder created by user */
-    }
-
-    vdctx->device           = hwctx->device;
-    vdctx->get_proc_address = hwctx->get_proc_address;
-
-    if (hwctx->flags & AV_HWACCEL_FLAG_IGNORE_LEVEL)
-        level = 0;
-    else if (level < 0)
-        return AVERROR(ENOTSUP);
 
     if (av_vdpau_get_surface_parameters(avctx, &type, &width, &height))
         return AVERROR(ENOSYS);
 
-    if (!(hwctx->flags & AV_HWACCEL_FLAG_ALLOW_HIGH_DEPTH) &&
-        type != VDP_CHROMA_TYPE_420)
-        return AVERROR(ENOSYS);
+    if (hwctx) {
+        hwctx->reset            = 0;
+
+        if (hwctx->context.decoder != VDP_INVALID_HANDLE) {
+            vdctx->decoder = hwctx->context.decoder;
+            vdctx->render  = hwctx->context.render;
+            vdctx->device  = VDP_INVALID_HANDLE;
+            return 0; /* Decoder created by user */
+        }
+
+        vdctx->device           = hwctx->device;
+        vdctx->get_proc_address = hwctx->get_proc_address;
+
+        if (hwctx->flags & AV_HWACCEL_FLAG_IGNORE_LEVEL)
+            level = 0;
+
+        if (!(hwctx->flags & AV_HWACCEL_FLAG_ALLOW_HIGH_DEPTH) &&
+            type != VDP_CHROMA_TYPE_420)
+            return AVERROR(ENOSYS);
+    } else {
+        AVHWFramesContext *frames_ctx;
+        AVVDPAUDeviceContext *dev_ctx;
+
+        ret = ff_decode_get_hw_frames_ctx(avctx, AV_HWDEVICE_TYPE_VDPAU);
+        if (ret < 0)
+            return ret;
+
+        frames_ctx = (AVHWFramesContext*)avctx->hw_frames_ctx->data;
+        dev_ctx = frames_ctx->device_ctx->hwctx;
+
+        vdctx->device           = dev_ctx->device;
+        vdctx->get_proc_address = dev_ctx->get_proc_address;
+
+        if (avctx->hwaccel_flags & AV_HWACCEL_FLAG_IGNORE_LEVEL)
+            level = 0;
+    }
+
+    if (level < 0)
+        return AVERROR(ENOTSUP);
 
     status = vdctx->get_proc_address(vdctx->device,
                                      VDP_FUNC_ID_VIDEO_SURFACE_QUERY_CAPABILITIES,
@@ -238,7 +279,7 @@ static int ff_vdpau_common_reinit(AVCodecContext *avctx)
     if (vdctx->device == VDP_INVALID_HANDLE)
         return 0; /* Decoder created by user */
     if (avctx->coded_width == vdctx->width &&
-        avctx->coded_height == vdctx->height && !hwctx->reset)
+        avctx->coded_height == vdctx->height && (!hwctx || !hwctx->reset))
         return 0;
 
     avctx->hwaccel->uninit(avctx);
@@ -267,7 +308,7 @@ int ff_vdpau_common_end_frame(AVCodecContext *avctx, AVFrame *frame,
     if (val < 0)
         return val;
 
-    status = vdctx->render(vdctx->decoder, surf, (void *)&pic_ctx->info,
+    status = vdctx->render(vdctx->decoder, surf, &pic_ctx->info,
                            pic_ctx->bitstream_buffers_used,
                            pic_ctx->bitstream_buffers);
 

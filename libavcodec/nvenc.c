@@ -28,12 +28,7 @@
 
 #define CUDA_LIBNAME "libcuda.so"
 
-#if HAVE_DLFCN_H
-#include <dlfcn.h>
-
-#define NVENC_LIBNAME "libnvidia-encode.so"
-
-#elif HAVE_WINDOWS_H
+#if HAVE_WINDOWS_H
 #include <windows.h>
 
 #if ARCH_X86_64
@@ -45,6 +40,9 @@
 #define dlopen(filename, flags) LoadLibrary((filename))
 #define dlsym(handle, symbol)   GetProcAddress(handle, symbol)
 #define dlclose(handle)         FreeLibrary(handle)
+#else
+#include <dlfcn.h>
+#define NVENC_LIBNAME "libnvidia-encode.so"
 #endif
 
 #include "libavutil/common.h"
@@ -123,12 +121,14 @@ static const struct {
     { NV_ENC_ERR_OUT_OF_MEMORY,            AVERROR(ENOMEM),  "out of memory"            },
     { NV_ENC_ERR_ENCODER_NOT_INITIALIZED,  AVERROR(EINVAL),  "encoder not initialized"  },
     { NV_ENC_ERR_UNSUPPORTED_PARAM,        AVERROR(ENOSYS),  "unsupported param"        },
-    { NV_ENC_ERR_LOCK_BUSY,                AVERROR(EAGAIN),  "lock busy"                },
+    { NV_ENC_ERR_LOCK_BUSY,                AVERROR(EBUSY),   "lock busy"                },
     { NV_ENC_ERR_NOT_ENOUGH_BUFFER,        AVERROR(ENOBUFS), "not enough buffer"        },
     { NV_ENC_ERR_INVALID_VERSION,          AVERROR(EINVAL),  "invalid version"          },
     { NV_ENC_ERR_MAP_FAILED,               AVERROR(EIO),     "map failed"               },
-    { NV_ENC_ERR_NEED_MORE_INPUT,          AVERROR(EAGAIN),  "need more input"          },
-    { NV_ENC_ERR_ENCODER_BUSY,             AVERROR(EAGAIN),  "encoder busy"             },
+    /* this is error should always be treated specially, so this "mapping"
+     * is for completeness only */
+    { NV_ENC_ERR_NEED_MORE_INPUT,          AVERROR_UNKNOWN,  "need more input"          },
+    { NV_ENC_ERR_ENCODER_BUSY,             AVERROR(EBUSY),   "encoder busy"             },
     { NV_ENC_ERR_EVENT_NOT_REGISTERD,      AVERROR(EBADF),   "event not registered"     },
     { NV_ENC_ERR_GENERIC,                  AVERROR_UNKNOWN,  "generic error"            },
     { NV_ENC_ERR_INCOMPATIBLE_CLIENT_KEY,  AVERROR(EINVAL),  "incompatible client key"  },
@@ -178,6 +178,7 @@ static av_cold int nvenc_load_libraries(AVCodecContext *avctx)
     nvel->cu_device_compute_capability = cuDeviceComputeCapability;
     nvel->cu_ctx_create                = cuCtxCreate_v2;
     nvel->cu_ctx_pop_current           = cuCtxPopCurrent_v2;
+    nvel->cu_ctx_push_current          = cuCtxPushCurrent_v2;
     nvel->cu_ctx_destroy               = cuCtxDestroy_v2;
 #else
     LOAD_LIBRARY(nvel->cuda, CUDA_LIBNAME);
@@ -190,6 +191,7 @@ static av_cold int nvenc_load_libraries(AVCodecContext *avctx)
                 "cuDeviceComputeCapability");
     LOAD_SYMBOL(nvel->cu_ctx_create, nvel->cuda, "cuCtxCreate_v2");
     LOAD_SYMBOL(nvel->cu_ctx_pop_current, nvel->cuda, "cuCtxPopCurrent_v2");
+    LOAD_SYMBOL(nvel->cu_ctx_push_current, nvel->cuda, "cuCtxPushCurrent_v2");
     LOAD_SYMBOL(nvel->cu_ctx_destroy, nvel->cuda, "cuCtxDestroy_v2");
 #endif
 
@@ -357,6 +359,9 @@ static int nvenc_check_device(AVCodecContext *avctx, int idx)
     if (((major << 4) | minor) < NVENC_CAP)
         goto fail;
 
+    if (ctx->device != idx && ctx->device != ANY_DEVICE)
+        return -1;
+
     ret = nvel->cu_ctx_create(&ctx->cu_context_internal, 0, cu_device);
     if (ret != CUDA_SUCCESS)
         goto fail;
@@ -375,7 +380,7 @@ static int nvenc_check_device(AVCodecContext *avctx, int idx)
 
     av_log(avctx, loglevel, "supports NVENC\n");
 
-    if (ctx->device == cu_device || ctx->device == ANY_DEVICE)
+    if (ctx->device == idx || ctx->device == ANY_DEVICE)
         return 0;
 
 fail3:
@@ -474,7 +479,7 @@ typedef struct GUIDTuple {
 
 #define PRESET(name, ...) PRESET_ALIAS(name, name, __VA_ARGS__)
 
-static int nvec_map_preset(NVENCContext *ctx)
+static int nvenc_map_preset(NVENCContext *ctx)
 {
     GUIDTuple presets[] = {
         PRESET(DEFAULT),
@@ -488,8 +493,7 @@ static int nvec_map_preset(NVENCContext *ctx)
         PRESET(LOSSLESS_HP,         NVENC_LOSSLESS),
         PRESET_ALIAS(SLOW, HQ,      NVENC_TWO_PASSES),
         PRESET_ALIAS(MEDIUM, HQ,    NVENC_ONE_PASS),
-        PRESET_ALIAS(FAST, HP,      NVENC_ONE_PASS),
-        { { 0 } }
+        PRESET_ALIAS(FAST, HP,      NVENC_ONE_PASS)
     };
 
     GUIDTuple *t = &presets[ctx->preset];
@@ -505,14 +509,32 @@ static int nvec_map_preset(NVENCContext *ctx)
 
 static void set_constqp(AVCodecContext *avctx, NV_ENC_RC_PARAMS *rc)
 {
+    NVENCContext *ctx = avctx->priv_data;
     rc->rateControlMode = NV_ENC_PARAMS_RC_CONSTQP;
-    rc->constQP.qpInterB = avctx->global_quality;
-    rc->constQP.qpInterP = avctx->global_quality;
-    rc->constQP.qpIntra  = avctx->global_quality;
+
+    if (ctx->init_qp_p >= 0) {
+        rc->constQP.qpInterP = ctx->init_qp_p;
+        if (ctx->init_qp_i >= 0 && ctx->init_qp_b >= 0) {
+            rc->constQP.qpIntra  = ctx->init_qp_i;
+            rc->constQP.qpInterB = ctx->init_qp_b;
+        } else if (avctx->i_quant_factor != 0.0 && avctx->b_quant_factor != 0.0) {
+            rc->constQP.qpIntra  = av_clip(rc->constQP.qpInterP * fabs(avctx->i_quant_factor) + avctx->i_quant_offset + 0.5, 0, 51);
+            rc->constQP.qpInterB = av_clip(rc->constQP.qpInterP * fabs(avctx->b_quant_factor) + avctx->b_quant_offset + 0.5, 0, 51);
+        } else {
+            rc->constQP.qpIntra  = rc->constQP.qpInterP;
+            rc->constQP.qpInterB = rc->constQP.qpInterP;
+        }
+    } else if (avctx->global_quality >= 0) {
+        rc->constQP.qpInterP = avctx->global_quality;
+        rc->constQP.qpInterB = avctx->global_quality;
+        rc->constQP.qpIntra  = avctx->global_quality;
+    }
 }
 
 static void set_vbr(AVCodecContext *avctx, NV_ENC_RC_PARAMS *rc)
 {
+    NVENCContext *ctx    = avctx->priv_data;
+
     if (avctx->qmin >= 0) {
         rc->enableMinQP    = 1;
         rc->minQP.qpInterB = avctx->qmin;
@@ -525,6 +547,30 @@ static void set_vbr(AVCodecContext *avctx, NV_ENC_RC_PARAMS *rc)
         rc->maxQP.qpInterB = avctx->qmax;
         rc->maxQP.qpInterP = avctx->qmax;
         rc->maxQP.qpIntra  = avctx->qmax;
+    }
+
+    if (ctx->init_qp_p >= 0) {
+        rc->enableInitialRCQP = 1;
+        rc->initialRCQP.qpInterP = ctx->init_qp_p;
+        if (ctx->init_qp_i < 0) {
+            if (avctx->i_quant_factor != 0.0 && avctx->b_quant_factor != 0.0) {
+                rc->initialRCQP.qpIntra = av_clip(rc->initialRCQP.qpInterP * fabs(avctx->i_quant_factor) + avctx->i_quant_offset + 0.5, 0, 51);
+            } else {
+                rc->initialRCQP.qpIntra = rc->initialRCQP.qpInterP;
+            }
+        } else {
+            rc->initialRCQP.qpIntra = ctx->init_qp_i;
+        }
+
+        if (ctx->init_qp_b < 0) {
+            if (avctx->i_quant_factor != 0.0 && avctx->b_quant_factor != 0.0) {
+                rc->initialRCQP.qpInterB = av_clip(rc->initialRCQP.qpInterP * fabs(avctx->b_quant_factor) + avctx->b_quant_offset + 0.5, 0, 51);
+            } else {
+                rc->initialRCQP.qpInterB = rc->initialRCQP.qpInterP;
+            }
+        } else {
+            rc->initialRCQP.qpInterB = ctx->init_qp_b;
+        }
     }
 }
 
@@ -543,22 +589,12 @@ static void nvenc_override_rate_control(AVCodecContext *avctx,
 
     switch (ctx->rc) {
     case NV_ENC_PARAMS_RC_CONSTQP:
-        if (avctx->global_quality < 0) {
-            av_log(avctx, AV_LOG_WARNING,
-                   "The constant quality rate-control requires "
-                   "the 'global_quality' option set.\n");
-            return;
-        }
         set_constqp(avctx, rc);
         return;
     case NV_ENC_PARAMS_RC_2_PASS_VBR:
     case NV_ENC_PARAMS_RC_VBR:
-        if (avctx->qmin < 0 && avctx->qmax < 0) {
-            av_log(avctx, AV_LOG_WARNING,
-                   "The variable bitrate rate-control requires "
-                   "the 'qmin' and/or 'qmax' option set.\n");
-            return;
-        }
+        set_vbr(avctx, rc);
+        break;
     case NV_ENC_PARAMS_RC_VBR_MINQP:
         if (avctx->qmin < 0) {
             av_log(avctx, AV_LOG_WARNING,
@@ -600,8 +636,11 @@ static void nvenc_setup_rate_control(AVCodecContext *avctx)
         set_lossless(avctx, rc);
     } else if (avctx->global_quality > 0) {
         set_constqp(avctx, rc);
-    } else if (avctx->qmin >= 0 && avctx->qmax >= 0) {
-        rc->rateControlMode = NV_ENC_PARAMS_RC_VBR;
+    } else {
+        if (ctx->flags & NVENC_TWO_PASSES)
+            rc->rateControlMode = NV_ENC_PARAMS_RC_2_PASS_VBR;
+        else
+            rc->rateControlMode = NV_ENC_PARAMS_RC_VBR;
         set_vbr(avctx, rc);
     }
 
@@ -623,7 +662,7 @@ static void nvenc_setup_rate_control(AVCodecContext *avctx)
         av_log(avctx, AV_LOG_VERBOSE, "Temporal AQ enabled.\n");
     }
 
-    if (ctx->rc_lookahead) {
+    if (ctx->rc_lookahead > 0) {
         int lkd_bound = FFMIN(ctx->nb_surfaces, ctx->async_depth) -
                         ctx->config.frameIntervalP - 4;
 
@@ -833,6 +872,44 @@ static int nvenc_setup_codec_config(AVCodecContext *avctx)
     return 0;
 }
 
+static int nvenc_recalc_surfaces(AVCodecContext *avctx)
+{
+    NVENCContext *ctx = avctx->priv_data;
+    // default minimum of 4 surfaces
+    // multiply by 2 for number of NVENCs on gpu (hardcode to 2)
+    // another multiply by 2 to avoid blocking next PBB group
+    int nb_surfaces = FFMAX(4, ctx->config.frameIntervalP * 2 * 2);
+
+    // lookahead enabled
+    if (ctx->rc_lookahead > 0) {
+        // +1 is to account for lkd_bound calculation later
+        // +4 is to allow sufficient pipelining with lookahead
+        nb_surfaces = FFMAX(1, FFMAX(nb_surfaces, ctx->rc_lookahead + ctx->config.frameIntervalP + 1 + 4));
+        if (nb_surfaces > ctx->nb_surfaces && ctx->nb_surfaces > 0) {
+            av_log(avctx, AV_LOG_WARNING,
+                "Defined rc_lookahead requires more surfaces, "
+                "increasing used surfaces %d -> %d\n",
+                ctx->nb_surfaces, nb_surfaces);
+        }
+        ctx->nb_surfaces = FFMAX(nb_surfaces, ctx->nb_surfaces);
+    } else {
+        if (ctx->config.frameIntervalP > 1 &&
+            ctx->nb_surfaces < nb_surfaces && ctx->nb_surfaces > 0) {
+            av_log(avctx, AV_LOG_WARNING,
+                "Defined b-frame requires more surfaces, "
+                "increasing used surfaces %d -> %d\n",
+                ctx->nb_surfaces, nb_surfaces);
+            ctx->nb_surfaces = FFMAX(ctx->nb_surfaces, nb_surfaces);
+        } else if (ctx->nb_surfaces <= 0)
+            ctx->nb_surfaces = nb_surfaces;
+        // otherwise use user specified value
+    }
+
+    ctx->nb_surfaces = FFMAX(1, FFMIN(MAX_REGISTERED_FRAMES, ctx->nb_surfaces));
+    ctx->async_depth = FFMIN(ctx->async_depth, ctx->nb_surfaces - 1);
+    return 0;
+}
+
 static int nvenc_setup_encoder(AVCodecContext *avctx)
 {
     NVENCContext *ctx               = avctx->priv_data;
@@ -877,7 +954,7 @@ static int nvenc_setup_encoder(AVCodecContext *avctx)
 
     ctx->params.encodeConfig = &ctx->config;
 
-    nvec_map_preset(ctx);
+    nvenc_map_preset(ctx);
 
     preset_cfg.version           = NV_ENC_PRESET_CONFIG_VER;
     preset_cfg.presetCfg.version = NV_ENC_CONFIG_VER;
@@ -915,6 +992,8 @@ static int nvenc_setup_encoder(AVCodecContext *avctx)
     ctx->initial_pts[0] = AV_NOPTS_VALUE;
     ctx->initial_pts[1] = AV_NOPTS_VALUE;
 
+    nvenc_recalc_surfaces(avctx);
+
     nvenc_setup_rate_control(avctx);
 
     if (avctx->flags & AV_CODEC_FLAG_INTERLACED_DCT) {
@@ -945,6 +1024,7 @@ static int nvenc_alloc_surface(AVCodecContext *avctx, int idx)
 {
     NVENCContext *ctx               = avctx->priv_data;
     NV_ENCODE_API_FUNCTION_LIST *nv = &ctx->nvel.nvenc_funcs;
+    NVENCFrame *tmp_surface         = &ctx->frames[idx];
     int ret;
     NV_ENC_CREATE_BITSTREAM_BUFFER out_buffer = { 0 };
 
@@ -1005,6 +1085,8 @@ static int nvenc_alloc_surface(AVCodecContext *avctx, int idx)
 
     ctx->frames[idx].out  = out_buffer.bitstreamBuffer;
 
+    av_fifo_generic_write(ctx->unused_surface_queue, &tmp_surface, sizeof(tmp_surface), NULL);
+
     return 0;
 }
 
@@ -1013,17 +1095,15 @@ static int nvenc_setup_surfaces(AVCodecContext *avctx)
     NVENCContext *ctx = avctx->priv_data;
     int i, ret;
 
-    ctx->nb_surfaces = FFMAX(4 + avctx->max_b_frames,
-                             ctx->nb_surfaces);
-    ctx->async_depth = FFMIN(ctx->async_depth, ctx->nb_surfaces - 1);
-
-
     ctx->frames = av_mallocz_array(ctx->nb_surfaces, sizeof(*ctx->frames));
     if (!ctx->frames)
         return AVERROR(ENOMEM);
 
     ctx->timestamps = av_fifo_alloc(ctx->nb_surfaces * sizeof(int64_t));
     if (!ctx->timestamps)
+        return AVERROR(ENOMEM);
+    ctx->unused_surface_queue = av_fifo_alloc(ctx->nb_surfaces * sizeof(NVENCFrame*));
+    if (!ctx->unused_surface_queue)
         return AVERROR(ENOMEM);
     ctx->pending = av_fifo_alloc(ctx->nb_surfaces * sizeof(*ctx->frames));
     if (!ctx->pending)
@@ -1082,6 +1162,7 @@ av_cold int ff_nvenc_encode_close(AVCodecContext *avctx)
     av_fifo_free(ctx->timestamps);
     av_fifo_free(ctx->pending);
     av_fifo_free(ctx->ready);
+    av_fifo_free(ctx->unused_surface_queue);
 
     if (ctx->frames) {
         for (i = 0; i < ctx->nb_surfaces; ++i) {
@@ -1160,16 +1241,14 @@ av_cold int ff_nvenc_encode_init(AVCodecContext *avctx)
 
 static NVENCFrame *get_free_frame(NVENCContext *ctx)
 {
-    int i;
+    NVENCFrame *tmp_surf;
 
-    for (i = 0; i < ctx->nb_surfaces; i++) {
-        if (!ctx->frames[i].locked) {
-            ctx->frames[i].locked = 1;
-            return &ctx->frames[i];
-        }
-    }
+    if (!(av_fifo_size(ctx->unused_surface_queue) > 0))
+        // queue empty
+        return NULL;
 
-    return NULL;
+    av_fifo_generic_read(ctx->unused_surface_queue, &tmp_surf, sizeof(tmp_surf), NULL);
+    return tmp_surf;
 }
 
 static int nvenc_copy_frame(NV_ENC_LOCK_INPUT_BUFFER *in, const AVFrame *frame)
@@ -1469,7 +1548,7 @@ static int nvenc_get_output(AVCodecContext *avctx, AVPacket *pkt)
         frame->in = NULL;
     }
 
-    frame->locked = 0;
+    av_fifo_generic_write(ctx->unused_surface_queue, &frame, sizeof(frame), NULL);
 
     ret = nvenc_set_timestamp(avctx, &params, pkt);
     if (ret < 0)
@@ -1522,9 +1601,11 @@ int ff_nvenc_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
                           const AVFrame *frame, int *got_packet)
 {
     NVENCContext *ctx               = avctx->priv_data;
+    NVENCLibraryContext *nvel       = &ctx->nvel;
     NV_ENCODE_API_FUNCTION_LIST *nv = &ctx->nvel.nvenc_funcs;
     NV_ENC_PIC_PARAMS params        = { 0 };
     NVENCFrame         *nvenc_frame = NULL;
+    CUcontext dummy;
     int enc_ret, ret;
 
     params.version = NV_ENC_PIC_PARAMS_VER;
@@ -1570,7 +1651,10 @@ int ff_nvenc_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
         params.encodePicFlags = NV_ENC_PIC_FLAG_EOS;
     }
 
+    nvel->cu_ctx_push_current(ctx->cu_context);
     enc_ret = nv->nvEncEncodePicture(ctx->nvenc_ctx, &params);
+    nvel->cu_ctx_pop_current(&dummy);
+
     if (enc_ret != NV_ENC_SUCCESS &&
         enc_ret != NV_ENC_ERR_NEED_MORE_INPUT)
         return nvenc_print_error(avctx, enc_ret, "Error encoding the frame");
