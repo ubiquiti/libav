@@ -372,6 +372,7 @@ static int convert_pix_fmt(enum AVPixelFormat pix_fmt)
 
 static av_cold int X264_init(AVCodecContext *avctx)
 {
+    int maxDelayedFrames = 0;
     X264Context *x4 = avctx->priv_data;
     AVCPBProperties *cpb_props;
 
@@ -662,6 +663,11 @@ FF_ENABLE_DEPRECATION_WARNINGS
     cpb_props->buffer_size = x4->params.rc.i_vbv_buffer_size * 1000;
     cpb_props->max_bitrate = x4->params.rc.i_vbv_max_bitrate * 1000;
     cpb_props->avg_bitrate = x4->params.rc.i_bitrate         * 1000;
+
+    if(x4->params.i_log_level>=X264_LOG_INFO){
+        maxDelayedFrames = x264_encoder_maximum_delayed_frames(x4->enc);
+        av_log(avctx, AV_LOG_INFO, "max libx264 delayed frames: %d\n", maxDelayedFrames);
+    }
 
     return 0;
 }

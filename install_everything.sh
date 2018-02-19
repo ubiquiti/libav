@@ -12,6 +12,9 @@ DEST_FOLDER=${LOCAL_PREFIX}/libav_install
 	--enable-gpl \
 	--enable-libx264 \
 
+#--disable-optimizations \
+#--enable-debug \
+
 
 make -j32 install
 
