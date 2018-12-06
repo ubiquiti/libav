@@ -131,6 +131,7 @@ typedef struct PrintContext {
 static AVIOContext *probe_out = NULL;
 static PrintContext octx;
 #define AVP_INDENT() avio_printf(probe_out, "%*c", octx.level * 2, ' ')
+#define CONV_FP(x,fp) ((double) (x)) / (1 << fp)
 
 /*
  * Default format, INI
@@ -235,10 +236,14 @@ static void ini_print_integer(const char *key, int64_t value)
 
 static void ini_print_string(const char *key, const char *value)
 {
-    ini_escape_print(key);
-    avio_printf(probe_out, "=");
-    ini_escape_print(value);
-    avio_w8(probe_out, '\n');
+    if (key) {
+        ini_escape_print(key);
+        avio_printf(probe_out, "=%s\n", value);
+    } else {
+        if (octx.prefix[octx.level -1].nb_elems)
+            avio_printf(probe_out, ",");
+        avio_printf(probe_out, "%s", value);
+    }
 }
 
 /*
@@ -329,14 +334,24 @@ static void json_escape_print(const char *s)
 
 static void json_print_string(const char *key, const char *value)
 {
-    if (octx.prefix[octx.level -1].nb_elems)
-        avio_printf(probe_out, ",\n");
-    AVP_INDENT();
-    avio_w8(probe_out, '\"');
-    json_escape_print(key);
-    avio_printf(probe_out, "\" : \"");
-    json_escape_print(value);
-    avio_w8(probe_out, '\"');
+    if (key) {
+        if (octx.prefix[octx.level -1].nb_elems)
+            avio_printf(probe_out, ",\n");
+        AVP_INDENT();
+        avio_w8(probe_out, '\"');
+        json_escape_print(key);
+        avio_printf(probe_out, "\" : \"");
+        json_escape_print(value);
+        avio_w8(probe_out, '\"');
+    } else {
+        if (octx.prefix[octx.level -1].nb_elems)
+            avio_printf(probe_out, ", ");
+        else
+            AVP_INDENT();
+        avio_w8(probe_out, '\"');
+        json_escape_print(value);
+        avio_w8(probe_out, '\"');
+    }
 }
 
 /*
@@ -802,6 +817,15 @@ static void show_stream(InputFile *ifile, InputStream *ist)
                 for (j = 0; j < 9; j++)
                     probe_int(NULL, ((int32_t *)sd->data)[j]);
                 probe_array_footer("matrix", 1);
+                probe_array_header("matrix_str", 1);
+                for (j = 0; j < 9; j++) {
+                    char buf[32];
+                    int fp = (j == 2 || j == 5 || j == 8) ? 30 : 16;
+                    int32_t val = ((int32_t *)sd->data)[j];
+                    value_string(buf, sizeof(buf), CONV_FP(val, fp), "");
+                    probe_str(NULL, buf);
+                }
+                probe_array_footer("matrix_str", 1);
                 probe_int("rotation",
                           av_display_rotation_get((int32_t *)sd->data));
                 probe_object_footer("displaymatrix");

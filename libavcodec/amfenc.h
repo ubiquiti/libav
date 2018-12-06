@@ -68,6 +68,9 @@ typedef struct AmfContext {
     AVBufferRef        *hw_device_ctx; ///< pointer to HW accelerator (decoder)
     AVBufferRef        *hw_frames_ctx; ///< pointer to HW accelerator (frame allocator)
 
+    int                 hwsurfaces_in_queue;
+    int                 hwsurfaces_in_queue_max;
+
     // helpers to handle async calls
     int                 delayed_drain;
     AMFSurface         *delayed_surface;
@@ -80,7 +83,6 @@ typedef struct AmfContext {
 
     // common encoder options
     int                 log_to_dbg;
-    char                *writer_id;
 
     // Static options, have to be set before Init() call
     int                 usage;
@@ -152,7 +154,6 @@ extern const enum AVPixelFormat ff_amf_pix_fmts[];
     }
 
 #define AMF_COMMON_OPTIONS \
-    { "log_to_dbg",     "Enable AMF logging to debug output",   OFFSET(log_to_dbg), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, VE }, \
-    { "writer_id",      "Enable AMF logging to writer id",      OFFSET(writer_id),  AV_OPT_TYPE_STRING, { .str = "libavcodec" }, 0, 1, VE } \
+    { "log_to_dbg",     "Enable AMF logging to debug output",   OFFSET(log_to_dbg), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, VE } \
 
 #endif //AVCODEC_AMFENC_H

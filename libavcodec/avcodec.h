@@ -900,6 +900,13 @@ typedef struct RcOverride{
 #define AV_CODEC_CAP_HYBRID              (1 << 18)
 
 /**
+ * This codec takes the reordered_opaque field from input AVFrames
+ * and returns it in the corresponding field in AVCodecContext after
+ * encoding.
+ */
+#define AV_CODEC_CAP_ENCODER_REORDERED_OPAQUE (1 << 19)
+
+/**
  * Pan Scan area.
  * This specifies the area which should be displayed.
  * Note there may be multiple such areas for one frame.
@@ -2297,7 +2304,10 @@ typedef struct AVCodecContext {
     /**
      * opaque 64-bit number (generally a PTS) that will be reordered and
      * output in AVFrame.reordered_opaque
-     * - encoding: unused
+     * - encoding: Set by libavcodec to the reordered_opaque of the input
+     *             frame corresponding to the last returned packet. Only
+     *             supported by encoders with the
+     *             AV_CODEC_CAP_ENCODER_REORDERED_OPAQUE capability.
      * - decoding: Set by user.
      */
     int64_t reordered_opaque;
@@ -2550,6 +2560,10 @@ typedef struct AVCodecContext {
 #define FF_PROFILE_HEVC_MAIN_10                     2
 #define FF_PROFILE_HEVC_MAIN_STILL_PICTURE          3
 #define FF_PROFILE_HEVC_REXT                        4
+
+#define FF_PROFILE_AV1_MAIN                         0
+#define FF_PROFILE_AV1_HIGH                         1
+#define FF_PROFILE_AV1_PROFESSIONAL                 2
 
     /**
      * level
@@ -4923,6 +4937,7 @@ typedef struct AVBitStreamFilter {
     int (*init)(AVBSFContext *ctx);
     int (*filter)(AVBSFContext *ctx, AVPacket *pkt);
     void (*close)(AVBSFContext *ctx);
+    void (*flush)(AVBSFContext *ctx);
 } AVBitStreamFilter;
 
 #if FF_API_OLD_BSF
@@ -5024,6 +5039,11 @@ int av_bsf_send_packet(AVBSFContext *ctx, AVPacket *pkt);
  * AVERROR(EAGAIN) immediately after a successful av_bsf_send_packet() call.
  */
 int av_bsf_receive_packet(AVBSFContext *ctx, AVPacket *pkt);
+
+/**
+ * Reset the internal bitstream filter state / flush internal buffers.
+ */
+void av_bsf_flush(AVBSFContext *ctx);
 
 /**
  * Free a bitstream filter context and everything associated with it; write NULL

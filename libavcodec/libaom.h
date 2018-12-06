@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) 2013 Guillaume Martres <smarter@ubuntu.com>
+ *
  * This file is part of Libav.
  *
  * Libav is free software; you can redistribute it and/or
@@ -16,29 +18,14 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#ifndef AVCODEC_BSF_H
-#define AVCODEC_BSF_H
+#ifndef AVCODEC_LIBAOM_H
+#define AVCODEC_LIBAOM_H
 
-#include "avcodec.h"
+#include <aom/aom_codec.h>
 
-/**
- * Called by the bitstream filters to get the next packet for filtering.
- * The filter is responsible for either freeing the packet or passing it to the
- * caller.
- */
-int ff_bsf_get_packet(AVBSFContext *ctx, AVPacket **pkt);
+#include "libavutil/pixfmt.h"
 
-/**
- * Called by bitstream filters to get packet for filtering.
- * The reference to packet is moved to provided packet structure.
- *
- * @param ctx pointer to AVBSFContext of filter
- * @param pkt pointer to packet to move reference to
- *
- * @return 0>= on success, negative AVERROR in case of failure
- */
-int ff_bsf_get_packet_ref(AVBSFContext *ctx, AVPacket *pkt);
+enum AVPixelFormat ff_aom_imgfmt_to_pixfmt(aom_img_fmt_t img, int depth);
+aom_img_fmt_t ff_aom_pixfmt_to_imgfmt(enum AVPixelFormat pix);
 
-const AVClass *ff_bsf_child_class_next(const AVClass *prev);
-
-#endif /* AVCODEC_BSF_H */
+#endif /* AVCODEC_LIBAOM_H */

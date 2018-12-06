@@ -170,6 +170,16 @@ int av_bsf_init(AVBSFContext *ctx)
     return 0;
 }
 
+void av_bsf_flush(AVBSFContext *ctx)
+{
+    ctx->internal->eof = 0;
+
+    av_packet_unref(ctx->internal->buffer_pkt);
+
+    if (ctx->filter->flush)
+        ctx->filter->flush(ctx);
+}
+
 int av_bsf_send_packet(AVBSFContext *ctx, AVPacket *pkt)
 {
     if (!pkt || !pkt->data) {
@@ -214,6 +224,22 @@ int ff_bsf_get_packet(AVBSFContext *ctx, AVPacket **pkt)
 
     *pkt = ctx->internal->buffer_pkt;
     ctx->internal->buffer_pkt = tmp_pkt;
+
+    return 0;
+}
+
+int ff_bsf_get_packet_ref(AVBSFContext *ctx, AVPacket *pkt)
+{
+    AVBSFInternal *in = ctx->internal;
+
+    if (in->eof)
+        return AVERROR_EOF;
+
+    if (!ctx->internal->buffer_pkt->data &&
+        !ctx->internal->buffer_pkt->side_data_elems)
+        return AVERROR(EAGAIN);
+
+    av_packet_move_ref(pkt, ctx->internal->buffer_pkt);
 
     return 0;
 }

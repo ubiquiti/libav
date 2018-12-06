@@ -20,6 +20,12 @@ version <next>:
 - Intel QSV-accelerated MJPEG encoding
 - NVIDIA CUVID-accelerated H.264 and HEVC decoding
 - Intel QSV-accelerated overlay filter
+- AV1 Support through libaom
+- Haivision SRT protocol via libsrt
+- Dropped support for building for Windows XP. The minimum supported Windows
+  version is Windows Vista.
+- support mbedTLS-based TLS
+- AV1 Support through libdav1d
 
 
 version 12:
