@@ -649,8 +649,8 @@ static int mov_write_audio_tag(AVFormatContext *s, AVIOContext *pb, MOVTrack *tr
         avio_wb32(pb, get_samples_per_packet(track));
     } else {
         /* reserved for mp4/3gp */
-        avio_wb16(pb, 2);
-        avio_wb16(pb, 16);
+        avio_wb16(pb, track->par->channels);
+        avio_wb16(pb, track->par->bits_per_coded_sample);
         avio_wb16(pb, 0);
 
         avio_wb16(pb, 0); /* packet size (= 0) */
